@@ -1,0 +1,899 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------
+   Luxury serif typography for the storefront hero + section heads.
+   Playfair Display pairs a high-contrast serif with great Indic
+   glyph fallback; Cormorant Garamond carries the elegant italic
+   subheads. Loaded from Google Fonts via @import so the build is
+   zero-dep. Anything that wants the luxury voice opts in via the
+   `font-luxury` utility below; the admin shell never uses it, so
+   /admin keeps its system-sans look unchanged.
+   --------------------------------------------------------------- */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&display=swap');
+
+.font-luxury        { font-family: 'Playfair Display', 'Iowan Old Style', 'Apple Garamond', Georgia, serif; letter-spacing: -0.01em; }
+.font-luxury-italic { font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif; font-style: italic; letter-spacing: 0.005em; }
+
+/* Tailwind v4 class-based dark variant. Without this, `dark:` utilities
+   only engage with the OS-level prefers-color-scheme. We set the `dark`
+   class on <html> from the ThemeProvider when theme === 'dark' so the
+   admin's choice (not the OS) controls dark mode. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  margin: 0;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Smooth the bg/text colour swap when the admin flips the theme so the
+     site doesn't feel like it's snapping. */
+  transition: background-color 250ms ease, color 250ms ease;
+}
+
+/* ---------------------------------------------------------------
+   Site-wide theme presets. The active theme is set via
+   `<html data-theme="emerald">` from ThemeProvider — body inherits the
+   gradient, every other surface either uses Tailwind utilities (light
+   themes) or `dark:` variants (when the dark class is also on <html>).
+   Adding a theme: add a block here, append to THEME_KEYS in the backend
+   schema validator, add a swatch in admin Settings.
+   --------------------------------------------------------------- */
+
+/* Emerald — default. Matches the prior look (stone-50 with a green hint). */
+html[data-theme="emerald"] body {
+  background: linear-gradient(180deg, #ecfdf5 0%, #f5f5f4 100%);
+  color: #1c1917; /* stone-900 */
+}
+
+/* Sunrise — warm amber/orange wash. */
+html[data-theme="sunrise"] body {
+  background: linear-gradient(180deg, #fff7ed 0%, #fefce8 100%);
+  color: #1c1917;
+}
+
+/* Ocean — cool cyan/blue. */
+html[data-theme="ocean"] body {
+  background: linear-gradient(180deg, #ecfeff 0%, #eff6ff 100%);
+  color: #1c1917;
+}
+
+/* Lavender — soft purple/pink. */
+html[data-theme="lavender"] body {
+  background: linear-gradient(180deg, #faf5ff 0%, #fdf4ff 100%);
+  color: #1c1917;
+}
+
+/* Dark — true dark mode. The .dark class on <html> additionally engages
+   every `dark:` Tailwind utility throughout the codebase. */
+html[data-theme="dark"] body {
+  background: #020617; /* slate-950 */
+  color: #f1f5f9;       /* slate-100 */
+}
+
+/* Marvel — heroic red wash with a gold sunrise top. Iron Man / Avengers
+   palette. Stays light enough for body text without forcing dark mode. */
+html[data-theme="marvel"] body {
+  background: linear-gradient(180deg, #fef3c7 0%, #fee2e2 60%, #fecaca 100%);
+  color: #450a0a; /* deep red-brown for body copy on warm bg */
+}
+
+/* DC — midnight navy with a Bat-signal yellow accent at the top. Slightly
+   darker overall feel than Marvel; pairs the deep blue ground with a
+   warm signal so it doesn't read as plain dark mode. */
+html[data-theme="dc"] body {
+  background: linear-gradient(180deg, #fef9c3 0%, #dbeafe 30%, #1e3a8a 100%);
+  color: #0f172a; /* slate-900 — readable across the gradient */
+}
+
+/* ---------------------------------------------------------------
+   Theme accent variables. Each theme exposes three CSS custom
+   properties:
+     --theme-accent-soft   light tint used as a hover background on
+                           pale surfaces (customer navbar, dropdown
+                           menus, mobile menu rows).
+     --theme-accent-text   text colour that reads cleanly on the
+                           soft tint.
+     --theme-accent-on-dark
+                           translucent accent used as a hover
+                           background on the dark admin sidebar.
+   The .theme-hover and .theme-hover-dark utility classes below
+   consume these so changing a theme automatically retints every
+   hoverable option without per-component edits.
+   --------------------------------------------------------------- */
+html[data-theme="emerald"] {
+  --theme-accent-soft: #d1fae5;
+  --theme-accent-text: #065f46;
+  --theme-accent-on-dark: rgba(16, 185, 129, 0.18);
+}
+html[data-theme="sunrise"] {
+  --theme-accent-soft: #fef3c7;
+  --theme-accent-text: #78350f;
+  --theme-accent-on-dark: rgba(245, 158, 11, 0.20);
+}
+html[data-theme="ocean"] {
+  --theme-accent-soft: #e0f2fe;
+  --theme-accent-text: #075985;
+  --theme-accent-on-dark: rgba(14, 165, 233, 0.20);
+}
+html[data-theme="lavender"] {
+  --theme-accent-soft: #f3e8ff;
+  --theme-accent-text: #6b21a8;
+  --theme-accent-on-dark: rgba(168, 85, 247, 0.20);
+}
+html[data-theme="dark"] {
+  --theme-accent-soft: #334155;       /* slate-700 — works on dark body too */
+  --theme-accent-text: #f1f5f9;       /* slate-100 */
+  --theme-accent-on-dark: #334155;
+}
+html[data-theme="marvel"] {
+  --theme-accent-soft: #fee2e2;
+  --theme-accent-text: #7f1d1d;
+  --theme-accent-on-dark: rgba(220, 38, 38, 0.22);
+}
+html[data-theme="dc"] {
+  --theme-accent-soft: #dbeafe;
+  --theme-accent-text: #1e3a8a;
+  --theme-accent-on-dark: rgba(250, 204, 21, 0.18); /* Bat-signal yellow */
+}
+
+/* Hoverable "option" styling. Apply to navbar links, dropdown rows,
+   sidebar buttons, etc. !important keeps these from being pre-empted
+   by stray hover:bg-stone-100 classes that already exist on those
+   elements — a global tint that reflects the active theme is the
+   whole point. transition is on the base element, not :hover, so the
+   colour fade runs both directions. */
+.theme-hover {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+.theme-hover:hover {
+  background-color: var(--theme-accent-soft) !important;
+  color: var(--theme-accent-text) !important;
+}
+.theme-hover-dark {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+.theme-hover-dark:hover {
+  background-color: var(--theme-accent-on-dark) !important;
+  color: #ffffff !important;
+}
+
+/* ---------------------------------------------------------------
+   Dark-mode baseline overrides for the most common utility classes.
+   The codebase has hundreds of `bg-white` / `border-stone-200` /
+   `text-stone-900` usages — adding `dark:` variants to every single
+   one would be hundreds of edits with high regression risk. These
+   rules give every existing utility a sensible dark-mode value
+   without touching component files. Anything that already declares
+   an explicit `dark:` variant wins because that variant compiles to
+   a higher-specificity class.
+   --------------------------------------------------------------- */
+.dark .bg-white         { background-color: #1e293b !important; } /* slate-800 */
+.dark .bg-stone-50      { background-color: #0f172a !important; } /* slate-900 */
+.dark .bg-stone-100     { background-color: #0f172a !important; }
+.dark .bg-slate-50      { background-color: #0f172a !important; }
+.dark .bg-slate-100     { background-color: #0f172a !important; }
+
+.dark .border-stone-200 { border-color: #334155 !important; }      /* slate-700 */
+.dark .border-stone-100 { border-color: #334155 !important; }
+.dark .border-slate-200 { border-color: #334155 !important; }
+.dark .border-slate-100 { border-color: #334155 !important; }
+
+.dark .text-stone-900   { color: #f1f5f9 !important; }              /* slate-100 */
+.dark .text-stone-700   { color: #e2e8f0 !important; }              /* slate-200 */
+.dark .text-stone-600   { color: #cbd5e1 !important; }              /* slate-300 */
+.dark .text-stone-500   { color: #94a3b8 !important; }              /* slate-400 */
+.dark .text-stone-400   { color: #64748b !important; }              /* slate-500 */
+.dark .text-slate-900   { color: #f1f5f9 !important; }
+.dark .text-slate-700   { color: #e2e8f0 !important; }
+.dark .text-slate-600   { color: #cbd5e1 !important; }
+.dark .text-slate-500   { color: #94a3b8 !important; }
+.dark .text-slate-400   { color: #64748b !important; }
+
+/* Hover bg-stone-50/slate-50 lives mostly on rows/menu items. Keep them
+   readable instead of looking pure-black-on-black on hover. */
+.dark .hover\:bg-stone-50:hover { background-color: #1e293b !important; }
+.dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+.dark .hover\:bg-stone-100:hover { background-color: #334155 !important; }
+.dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Category-promotion marquee. Two copies of the same list sit inside a
+   flex track; we translate the track by exactly -50% so the second copy
+   takes the first's place — the loop is seamless because the two copies
+   are identical. Duration scales with the number of items in the JSX so
+   each promo gets roughly the same on-screen time regardless of how
+   many the admin configured. Hovering pauses the animation so a
+   customer can read or click without the image sliding away.
+
+   The `prefers-reduced-motion` block freezes the marquee for users who
+   have the OS motion-reduction setting on — accessibility default. */
+@keyframes promo-marquee {
+  0%   { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-50%, 0, 0); }
+}
+.promo-marquee-track {
+  animation: promo-marquee var(--promo-marquee-duration, 30s) linear infinite;
+  will-change: transform;
+}
+.promo-marquee-track:hover { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .promo-marquee-track { animation: none; }
+}
+
+/* Per-banner dimensions. Admin can set any of the four CSS vars on each
+   image; blanks fall back to the original h-24 (96px) / sm:h-32 (128px)
+   / w-auto defaults so existing promos keep their look without a save. */
+.promo-banner-img {
+  height: var(--promo-h-mobile, 6rem);
+  width: var(--promo-w-mobile, auto);
+}
+@media (min-width: 640px) {
+  .promo-banner-img {
+    height: var(--promo-h-desktop, 8rem);
+    width: var(--promo-w-desktop, auto);
+  }
+}
+
+/* ===============================================================
+   LUXURY STOREFRONT — saree + lehenga theme
+   ---------------------------------------------------------------
+   All classes below are opt-in (no global element selectors), so
+   only components that explicitly add `luxury-*` classes pick up
+   this look. The admin shell (admin.jsx) never uses these, which
+   is the contract: storefront re-skin must not touch admin UX.
+
+   Palette: ivory (#fdf8ef) → champagne (#f5e8c7) → maroon (#7a1f2a)
+   with old-gold accents (#c89b3c / #e0b04a). Every animation is
+   wrapped in @media (prefers-reduced-motion: reduce) so users who
+   have OS motion-reduction on get a still scene.
+   =============================================================== */
+
+:root {
+  --lux-ivory:      #fdf8ef;
+  --lux-champagne:  #f5e8c7;
+  --lux-gold:       #c89b3c;
+  --lux-gold-soft:  #e0b04a;
+  --lux-maroon:     #7a1f2a;
+  --lux-maroon-deep:#4a0f1a;
+  --lux-rose:       #c14b6a;
+}
+
+/* ── Hero backdrop ───────────────────────────────────────────────
+   A layered silk-like gradient: deep maroon ground, a warm gold
+   sunrise from the upper-left, and a champagne wash from the
+   right. Static layer; motion comes from the floating particles
+   and shimmer overlay below so this stays GPU-cheap.
+*/
+.luxury-hero-bg {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(224,176,74,0.45) 0%, transparent 42%),
+    radial-gradient(circle at 88% 28%, rgba(245,232,199,0.55) 0%, transparent 45%),
+    radial-gradient(circle at 50% 90%, rgba(193,75,106,0.30) 0%, transparent 50%),
+    linear-gradient(135deg, #4a0f1a 0%, #7a1f2a 55%, #2a0810 100%);
+}
+
+/* ── Diagonal silk-shimmer streak that drifts across the hero.
+   Two soft gold light-bands repeating over a 14-second loop.
+*/
+@keyframes luxury-shimmer {
+  0%   { transform: translate3d(-30%, -30%, 0); opacity: 0.55; }
+  50%  { opacity: 0.85; }
+  100% { transform: translate3d( 30%,  30%, 0); opacity: 0.55; }
+}
+.luxury-shimmer {
+  pointer-events: none;
+  position: absolute;
+  inset: -20%;
+  background:
+    repeating-linear-gradient(
+      115deg,
+      transparent 0px,
+      transparent 60px,
+      rgba(224,176,74,0.05) 62px,
+      rgba(224,176,74,0.12) 74px,
+      rgba(255,236,179,0.07) 76px,
+      transparent 90px,
+      transparent 180px
+    );
+  mix-blend-mode: screen;
+  animation: luxury-shimmer 14s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+
+/* ── Floating gold particles (CSS-only). Six dots drift upward
+   on separate timing/positions so the eye never sees a pattern.
+   We size and animate via custom properties so a single class
+   covers every dot with its own params, set inline in JSX.
+*/
+@keyframes luxury-float {
+  0%   { transform: translate3d(0, 100%, 0) scale(1);   opacity: 0; }
+  10%  { opacity: var(--lp-opacity, 0.7); }
+  90%  { opacity: var(--lp-opacity, 0.7); }
+  100% { transform: translate3d(var(--lp-drift, 30px), -120%, 0) scale(1.15); opacity: 0; }
+}
+.luxury-particle {
+  position: absolute;
+  left: var(--lp-x, 50%);
+  bottom: -10px;
+  width: var(--lp-size, 6px);
+  height: var(--lp-size, 6px);
+  border-radius: 999px;
+  background: radial-gradient(circle, #fff4cf 0%, #e0b04a 55%, rgba(200,155,60,0) 75%);
+  box-shadow: 0 0 12px rgba(224,176,74,0.55);
+  animation: luxury-float var(--lp-duration, 12s) linear var(--lp-delay, 0s) infinite;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ── Soft silk wave at the hero base — a thin animated SVG-ish
+   curve drawn as a CSS conic/linear gradient. Adds depth between
+   hero and the category strip without an image asset.
+*/
+@keyframes luxury-wave {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+.luxury-wave-divider {
+  height: 8px;
+  background: linear-gradient(90deg, transparent 0%, rgba(224,176,74,0.65) 25%, rgba(255,236,179,0.95) 50%, rgba(224,176,74,0.65) 75%, transparent 100%);
+  background-size: 200% 100%;
+  animation: luxury-wave 9s linear infinite;
+}
+
+/* ── Premium product card — gentle lift, gold border halo on
+   hover, sheen sweep across the image. Additive: works on top
+   of whatever Tailwind classes ProductCard already carries.
+*/
+.luxury-card {
+  position: relative;
+  transition: transform 380ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 380ms ease,
+              border-color 380ms ease;
+  border: 1px solid rgba(200, 155, 60, 0.12);
+}
+.luxury-card:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 18px 40px -18px rgba(74, 15, 26, 0.35),
+    0 0 0 1px rgba(224, 176, 74, 0.55);
+  border-color: rgba(224, 176, 74, 0.55);
+}
+/* Slow sheen that runs across the card image on hover only. */
+.luxury-card .luxury-card-image {
+  position: relative;
+  overflow: hidden;
+}
+.luxury-card .luxury-card-image::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(255,236,179,0.45) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 900ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
+}
+.luxury-card:hover .luxury-card-image::after {
+  transform: translateX(120%);
+}
+
+/* ── Gold-accent CTA — used for the "Shop the Drape" primary
+   button in the luxury hero. Falls back to a flat gradient on
+   browsers that don't support background-clip.
+*/
+.luxury-cta {
+  background: linear-gradient(135deg, #d4a64a 0%, #c89b3c 50%, #a47820 100%);
+  color: #2a0810;
+  border: 1px solid rgba(255, 236, 179, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 248, 215, 0.6),
+    0 10px 24px -10px rgba(200, 155, 60, 0.55);
+  transition: transform 220ms ease, box-shadow 220ms ease, filter 220ms ease;
+}
+.luxury-cta:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 248, 215, 0.75),
+    0 16px 32px -12px rgba(200, 155, 60, 0.75);
+}
+
+/* Ghost variant — outlined gold on translucent ivory, used as
+   the secondary CTA inside the luxury hero. */
+.luxury-cta-ghost {
+  background: rgba(253, 248, 239, 0.10);
+  color: #fdf8ef;
+  border: 1px solid rgba(224, 176, 74, 0.55);
+  backdrop-filter: blur(8px);
+  transition: background-color 220ms ease, border-color 220ms ease, transform 220ms ease;
+}
+.luxury-cta-ghost:hover {
+  background: rgba(253, 248, 239, 0.18);
+  border-color: rgba(255, 236, 179, 0.85);
+  transform: translateY(-1px);
+}
+
+/* ── Category chip — circular ivory pill with a gold ring on
+   hover. Replaces the plain stone-200 border without changing
+   markup outside the className list.
+*/
+.luxury-category-chip {
+  background: linear-gradient(180deg, #fdf8ef 0%, #f5e8c7 100%);
+  border: 1px solid rgba(200, 155, 60, 0.20);
+  transition: transform 280ms ease, box-shadow 280ms ease, border-color 280ms ease;
+}
+.luxury-category-chip:hover {
+  transform: translateY(-3px);
+  border-color: rgba(224, 176, 74, 0.85);
+  box-shadow: 0 10px 24px -10px rgba(122, 31, 42, 0.30);
+}
+
+/* ── Premium "drop label" badge (replaces the generic green
+   freshness pill on luxury product cards). Maroon ground with
+   a gold hairline border.
+*/
+.luxury-badge {
+  background: linear-gradient(135deg, #7a1f2a 0%, #4a0f1a 100%);
+  color: #fdf8ef;
+  border: 1px solid rgba(224, 176, 74, 0.55);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  font-size: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  box-shadow: 0 4px 10px -4px rgba(74, 15, 26, 0.45);
+}
+
+/* ── Accessibility: kill background motion if the user asks. */
+@media (prefers-reduced-motion: reduce) {
+  .luxury-shimmer,
+  .luxury-particle,
+  .luxury-wave-divider {
+    animation: none !important;
+  }
+}
+
+/* ===============================================================
+   EDITORIAL HOMEPAGE — saree & lehenga luxury storefront
+   ---------------------------------------------------------------
+   Replaces the FreshKart-style "hero + 5-col chips + 4-col grid"
+   layout with a fashion-editorial structure (cinematic hero,
+   collection mosaic, horizontal product scroller, brand story,
+   editor's pick, newsletter). All classes opt-in; the admin
+   shell never picks them up.
+   =============================================================== */
+
+/* ── Cinematic full-bleed hero. A deep dramatic backdrop with a
+   diagonal silk gradient that slowly drifts. Three layered radial
+   washes give the impression of stage lighting on fabric.
+*/
+.editorial-hero {
+  background:
+    radial-gradient(ellipse at 20% 20%, rgba(193, 75, 106, 0.45) 0%, transparent 40%),
+    radial-gradient(ellipse at 80% 30%, rgba(224, 176, 74, 0.30) 0%, transparent 45%),
+    radial-gradient(ellipse at 50% 100%, rgba(74, 15, 26, 0.85) 0%, transparent 60%),
+    linear-gradient(135deg, #1a0508 0%, #4a0f1a 40%, #2a0810 100%);
+  background-attachment: scroll;
+}
+
+/* ── Animated silk flow — a soft, large-grain gradient that drifts
+   diagonally over the cinematic hero. Reads as silk catching light.
+*/
+@keyframes silk-flow {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 200% 200%; }
+}
+.editorial-silk {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(255,236,179,0.00) 0px,
+      rgba(255,236,179,0.00) 80px,
+      rgba(255,236,179,0.04) 84px,
+      rgba(255,236,179,0.08) 96px,
+      rgba(193,75,106,0.05) 110px,
+      rgba(255,236,179,0.00) 140px,
+      rgba(255,236,179,0.00) 280px
+    );
+  background-size: 200% 200%;
+  animation: silk-flow 22s linear infinite;
+  mix-blend-mode: screen;
+  opacity: 0.85;
+  will-change: background-position;
+}
+
+/* ── Scroll cue — a slow vertical bounce under the hero copy. */
+@keyframes scroll-cue {
+  0%, 100% { transform: translateY(0);     opacity: 0.55; }
+  50%      { transform: translateY(6px);   opacity: 1;    }
+}
+.editorial-scroll-cue {
+  animation: scroll-cue 2.4s ease-in-out infinite;
+}
+
+/* ── Vertical marquee of saree-house labels behind the headline.
+   A column of stacked phrases that scrolls slowly upward so the
+   eye always finds the right side of the hero alive without
+   stealing focus from the headline. Two copies of the same list
+   stacked, translated -50% for a seamless loop.
+*/
+@keyframes house-marquee {
+  0%   { transform: translate3d(0, 0,    0); }
+  100% { transform: translate3d(0, -50%, 0); }
+}
+.editorial-house-marquee {
+  animation: house-marquee 28s linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .editorial-silk,
+  .editorial-scroll-cue,
+  .editorial-house-marquee { animation: none !important; }
+}
+
+/* ── Reveal-up — small fade + lift triggered when an element
+   gets the `.is-visible` class (added by an IntersectionObserver
+   in HomePage). Used to stagger collection tiles and section
+   headings into view as the user scrolls.
+*/
+.reveal-up {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 700ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              transform 700ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.reveal-up.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal-up { opacity: 1; transform: none; transition: none; }
+}
+
+/* ── Editorial collection tile. Each tile is a tall card with a
+   gradient backdrop, large serif title, and an arrow that slides
+   into view on hover. The whole tile lifts a touch.
+*/
+.editorial-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(200, 155, 60, 0.20);
+  transition: transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 500ms ease,
+              border-color 500ms ease;
+  cursor: pointer;
+}
+.editorial-tile:hover {
+  transform: translateY(-6px);
+  border-color: rgba(224, 176, 74, 0.65);
+  box-shadow: 0 30px 60px -30px rgba(74, 15, 26, 0.55);
+}
+/* Inner medallion (the emoji glyph). Slow zoom on hover. */
+.editorial-tile .editorial-tile-art {
+  transition: transform 900ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.editorial-tile:hover .editorial-tile-art {
+  transform: scale(1.08) rotate(-2deg);
+}
+/* Arrow indicator slides in from the right on hover. */
+.editorial-tile-arrow {
+  transform: translateX(-6px);
+  opacity: 0;
+  transition: transform 400ms ease, opacity 400ms ease;
+}
+.editorial-tile:hover .editorial-tile-arrow {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+/* ── Horizontal product scroller. CSS scroll-snap so cards lock
+   into position on flick. Hides the scrollbar but stays scrollable
+   via wheel / drag / arrow keys / touch.
+*/
+.editorial-scroller {
+  display: flex;
+  gap: 1.25rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-left: 1rem;
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE/Edge legacy */
+  padding-bottom: 1.5rem;         /* room for card shadow */
+}
+.editorial-scroller::-webkit-scrollbar { display: none; }
+.editorial-scroller > * {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}
+
+/* ── Editorial product card — a taller 3:4 portrait card used
+   inside the horizontal scroller. Distinct from the square
+   ProductCard used on listings so the homepage stays editorial
+   while listings stay scannable.
+*/
+.editorial-product-card {
+  width: 250px;
+  position: relative;
+  cursor: pointer;
+  transition: transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+@media (min-width: 640px) {
+  .editorial-product-card { width: 280px; }
+}
+.editorial-product-card:hover {
+  transform: translateY(-6px);
+}
+.editorial-product-card .epc-frame {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: linear-gradient(180deg, #f5e8c7 0%, #fdf8ef 60%, #f5e8c7 100%);
+  border: 1px solid rgba(200, 155, 60, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 6rem;
+  transition: border-color 400ms ease, box-shadow 400ms ease;
+}
+.editorial-product-card:hover .epc-frame {
+  border-color: rgba(224, 176, 74, 0.75);
+  box-shadow: 0 22px 44px -22px rgba(74, 15, 26, 0.40);
+}
+/* Slow sheen sweep on the frame on hover. */
+.editorial-product-card .epc-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(255,236,179,0.55) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 1100ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
+}
+.editorial-product-card:hover .epc-frame::after {
+  transform: translateX(120%);
+}
+
+/* ── Brand story strip — full-width ivory band with a big serif
+   pull-quote framed by gold hairlines.
+*/
+.editorial-band {
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 236, 179, 0.45) 0%, transparent 60%),
+    linear-gradient(180deg, #fdf8ef 0%, #f5e8c7 100%);
+  border-top: 1px solid rgba(200, 155, 60, 0.30);
+  border-bottom: 1px solid rgba(200, 155, 60, 0.30);
+}
+
+/* Thin gold hairline divider used inside the brand story strip
+   and beneath section headings. */
+.editorial-hairline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(200,155,60,0.85) 50%, transparent 100%);
+}
+
+/* ── "Atelier" newsletter band — deep maroon with gold accents. */
+.editorial-atelier {
+  background:
+    radial-gradient(ellipse at 20% 30%, rgba(224, 176, 74, 0.20) 0%, transparent 50%),
+    linear-gradient(135deg, #4a0f1a 0%, #2a0810 100%);
+  border-top: 1px solid rgba(224, 176, 74, 0.30);
+  border-bottom: 1px solid rgba(224, 176, 74, 0.30);
+}
+.editorial-atelier-input {
+  background: rgba(253, 248, 239, 0.06);
+  border: 1px solid rgba(224, 176, 74, 0.50);
+  color: #fdf8ef;
+  transition: border-color 220ms ease, background-color 220ms ease;
+}
+.editorial-atelier-input::placeholder { color: rgba(253, 248, 239, 0.45); }
+.editorial-atelier-input:focus {
+  outline: none;
+  border-color: rgba(255, 236, 179, 0.95);
+  background: rgba(253, 248, 239, 0.10);
+}
+
+/* ── Drop cap for the brand-story paragraph. */
+.editorial-dropcap::first-letter {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 4.5rem;
+  line-height: 0.9;
+  float: left;
+  padding: 4px 12px 0 0;
+  color: #7a1f2a;
+  font-weight: 600;
+}
+
+/* ===============================================================
+   LUXURY NAVBAR — customer shell only
+   ---------------------------------------------------------------
+   App.jsx mounts the Navbar component (components.jsx) on the
+   customer storefront only — admin shell renders without it.
+   Classes here are scoped, so adding them is safe.
+   =============================================================== */
+
+.luxury-navbar {
+  background:
+    linear-gradient(180deg, #fdf8ef 0%, #f5e8c7 100%);
+  border-bottom: 1px solid rgba(200, 155, 60, 0.40);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 236, 179, 0.6),
+    0 4px 12px -8px rgba(74, 15, 26, 0.20);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  position: relative;
+}
+
+/* Slim animated gold sheen running along the bottom edge of the
+   navbar. Subtle — looks like light catching a silk hem. */
+@keyframes navbar-sheen {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.luxury-navbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background:
+    linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 236, 179, 0.0) 30%,
+      rgba(255, 236, 179, 0.9) 50%,
+      rgba(255, 236, 179, 0.0) 70%,
+      transparent 100%);
+  background-size: 200% 100%;
+  animation: navbar-sheen 6s linear infinite;
+  pointer-events: none;
+}
+
+/* The brand-mark medallion — gold-on-maroon disc that replaces
+   the green leaf square. Rim catches a subtle highlight via
+   inset shadow. */
+.luxury-brand-mark {
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 236, 179, 0.55) 0%, transparent 60%),
+    linear-gradient(135deg, #c14b6a 0%, #7a1f2a 60%, #4a0f1a 100%);
+  border: 1px solid rgba(224, 176, 74, 0.65);
+  box-shadow:
+    0 4px 12px -4px rgba(74, 15, 26, 0.50),
+    inset 0 1px 0 rgba(255, 236, 179, 0.45);
+  transition: transform 360ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 360ms ease;
+}
+.luxury-brand-wrap:hover .luxury-brand-mark {
+  transform: scale(1.06) rotate(-3deg);
+  box-shadow:
+    0 8px 22px -6px rgba(74, 15, 26, 0.55),
+    inset 0 1px 0 rgba(255, 236, 179, 0.65);
+}
+
+/* Twinkling sparkle stars around the brand medallion. Three
+   stars on staggered phase so something is always blinking. */
+@keyframes sparkle-twinkle {
+  0%, 100% { opacity: 0;   transform: scale(0.4) rotate(0deg); }
+  35%      { opacity: 1;   transform: scale(1)   rotate(25deg); }
+  70%      { opacity: 0.2; transform: scale(0.7) rotate(50deg); }
+}
+.sparkle-star {
+  position: absolute;
+  pointer-events: none;
+  color: #e0b04a;
+  filter: drop-shadow(0 0 4px rgba(255, 236, 179, 0.85));
+  animation: sparkle-twinkle 3.6s ease-in-out infinite;
+}
+.sparkle-star.sparkle-1 { top: -6px;  right: -8px;  animation-delay: 0s;    width: 14px; height: 14px; }
+.sparkle-star.sparkle-2 { bottom: -4px; left: -8px;  animation-delay: 1.2s;  width: 10px; height: 10px; }
+.sparkle-star.sparkle-3 { top: 12px;  right: -12px; animation-delay: 2.4s;  width: 8px;  height: 8px;  }
+
+/* Brand tagline — gold serif italic instead of emerald. */
+.luxury-brand-tagline {
+  font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  color: #a47820;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Nav tab (Home / Shop). Animated gold underline grows from the
+   centre on hover; locked at 70% width when the tab is active. */
+.luxury-nav-tab {
+  position: relative;
+  color: #6b4326;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-weight: 500;
+  font-size: 0.875rem;
+  transition: color 220ms ease, background-color 220ms ease;
+}
+.luxury-nav-tab:hover {
+  color: #7a1f2a;
+  background-color: rgba(224, 176, 74, 0.15);
+}
+.luxury-nav-tab::after {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent 0%, #c89b3c 50%, transparent 100%);
+  transform: translateX(-50%);
+  transition: width 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.luxury-nav-tab:hover::after { width: 50%; }
+.luxury-nav-tab.is-active {
+  color: #4a0f1a;
+  background: linear-gradient(180deg, rgba(253,248,239,0.85) 0%, rgba(245,232,199,0.55) 100%);
+  font-weight: 600;
+}
+.luxury-nav-tab.is-active::after { width: 70%; }
+
+/* Action icon button — circular gold-soft hover, lifts a touch. */
+.luxury-icon-btn {
+  color: #6b4326;
+  background-color: transparent;
+  border-radius: 10px;
+  transition: color 220ms ease, background-color 220ms ease, transform 220ms ease;
+}
+.luxury-icon-btn:hover {
+  color: #7a1f2a;
+  background-color: rgba(224, 176, 74, 0.18);
+  transform: translateY(-1px);
+}
+
+/* Cart count badge — maroon→rose gradient, gold hairline. */
+.luxury-cart-badge {
+  background: linear-gradient(135deg, #c14b6a 0%, #7a1f2a 100%);
+  color: #fdf8ef;
+  border: 1px solid rgba(255, 236, 179, 0.7);
+  box-shadow: 0 2px 6px -2px rgba(74, 15, 26, 0.55);
+}
+
+/* Logged-in avatar disc — gold-on-maroon. */
+.luxury-avatar {
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 236, 179, 0.55) 0%, transparent 60%),
+    linear-gradient(135deg, #c14b6a 0%, #7a1f2a 100%);
+  color: #fdf8ef;
+  border: 1px solid rgba(224, 176, 74, 0.55);
+}
+
+/* Login link — maroon, underline grows on hover. */
+.luxury-link-login {
+  position: relative;
+  color: #6b4326;
+  transition: color 220ms ease;
+}
+.luxury-link-login:hover { color: #7a1f2a; }
+.luxury-link-login::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 1px;
+  background-color: #c89b3c;
+  transition: width 280ms ease;
+}
+.luxury-link-login:hover::after { width: 100%; }
+
+/* Mobile menu pane — same ivory→champagne wash. */
+.luxury-mobile-menu {
+  background: linear-gradient(180deg, #fdf8ef 0%, #f5e8c7 100%);
+  border-top: 1px solid rgba(200, 155, 60, 0.40);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxury-navbar::after,
+  .sparkle-star { animation: none !important; }
+}
