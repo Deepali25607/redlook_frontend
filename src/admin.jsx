@@ -720,7 +720,8 @@ function AdminUsersPage() {
         ) : users.length === 0 ? (
           <div className="p-12 text-center text-slate-500">No admins match these filters.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Name</th>
@@ -766,6 +767,7 @@ function AdminUsersPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
 
         {meta && meta.totalPages > 1 && (
@@ -1680,7 +1682,8 @@ function AdminProductsPage() {
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-slate-500">No products match these filters.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Product</th>
@@ -1750,6 +1753,7 @@ function AdminProductsPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
 
         {meta && meta.totalPages > 1 && (
@@ -1796,6 +1800,219 @@ function SummaryCard({ icon: Icon, tone, label, value, onClick, active }) {
   );
 }
 
+// Colour-variant editor — rendered inside ProductFormModal on edit mode
+// only. Variants are saved through their own /admin/products/:id/variants
+// endpoints, NOT batched with the parent product POST/PUT. This means
+// each variant edit is committed independently and the rest of the form
+// is unaffected if a single variant fails to save. New products: create
+// the base product first, reopen as edit, then add colours.
+function VariantEditor({ productId }) {
+  const toast = useToast();
+  const [variants, setVariants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  // null when not editing; an object {variant_id?, color, color_hex,
+  // stock, images} when the inline form is open. Existing variant has
+  // variant_id; new variant doesn't.
+  const [editing, setEditing] = useState(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await adminApi.listVariants(productId);
+      setVariants(r.data || []);
+    } catch (err) {
+      toast.push(err.message || 'Could not load colour variants', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [productId, toast]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const onSave = async (data) => {
+    if (editing.variant_id) {
+      await adminApi.updateVariant(productId, editing.variant_id, data);
+      toast.push('Colour updated');
+    } else {
+      await adminApi.createVariant(productId, data);
+      toast.push('Colour added');
+    }
+    setEditing(null);
+    await reload();
+  };
+
+  const onDelete = async (variant) => {
+    if (!window.confirm(`Delete colour "${variant.color}"? Customers will no longer see it.`)) return;
+    try {
+      const r = await adminApi.deleteVariant(productId, variant.variant_id);
+      toast.push(r.data?.soft_deleted ? 'Colour disabled (in past orders)' : 'Colour removed');
+      reload();
+    } catch (err) {
+      toast.push(err.message || 'Could not delete colour', 'error');
+    }
+  };
+
+  return (
+    <div className="border-t border-slate-200 dark:border-slate-700 pt-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Colour variants (optional)</h3>
+          <p className="text-xs text-slate-500 mt-0.5">When this product has 1+ colours, customers must pick one. Each colour has its own stock and photos.</p>
+        </div>
+        {!editing && (
+          <button type="button"
+            onClick={() => setEditing({ color: '', color_hex: '#cccccc', stock: 0, images: [] })}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 shrink-0">
+            <Plus className="w-3.5 h-3.5" /> Add colour
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-slate-400 py-3">Loading colours…</p>
+      ) : variants.length === 0 && !editing ? (
+        <p className="text-xs text-slate-500 py-3 italic">No colour variants. Customers will use the product's main stock count above.</p>
+      ) : (
+        <div className="space-y-2">
+          {variants.map((v) => (
+            <div key={v.variant_id} className="flex items-center gap-3 p-2 border border-slate-200 dark:border-slate-700 rounded-lg">
+              <span className="w-9 h-9 rounded-full border-2 border-white shadow-sm shrink-0 ring-1 ring-slate-200" style={{ background: v.color_hex }} />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{v.color}</div>
+                <div className="text-xs text-slate-500">Stock: {v.stock} · {v.images.length} photo{v.images.length === 1 ? '' : 's'}</div>
+              </div>
+              <button type="button" onClick={() => setEditing({ ...v })}
+                className="px-2 py-1 text-xs font-semibold text-slate-600 hover:text-slate-900">Edit</button>
+              <button type="button" onClick={() => onDelete(v)}
+                className="px-2 py-1 text-xs font-semibold text-red-600 hover:text-red-700">Delete</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <VariantInlineForm
+          initial={editing}
+          onCancel={() => setEditing(null)}
+          onSave={onSave} />
+      )}
+    </div>
+  );
+}
+
+// Inline editor for one variant. Used both for creating a new colour
+// and editing an existing one (initial.variant_id distinguishes).
+function VariantInlineForm({ initial, onCancel, onSave }) {
+  const toast = useToast();
+  const [color, setColor] = useState(initial.color || '');
+  const [hex, setHex] = useState(initial.color_hex || '#cccccc');
+  const [stock, setStock] = useState(String(initial.stock ?? 0));
+  const [images, setImages] = useState(Array.isArray(initial.images) ? initial.images : []);
+  const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const submit = async () => {
+    if (!color.trim()) return toast.push('Colour name is required', 'error');
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return toast.push('Hex colour must be #RRGGBB', 'error');
+    if (images.length === 0) return toast.push('At least one photo is required for this colour', 'error');
+    setSubmitting(true);
+    try {
+      await onSave({
+        color: color.trim(),
+        color_hex: hex.toLowerCase(),
+        stock: Number(stock) || 0,
+        images,
+      });
+    } catch (err) {
+      toast.push(err.message || 'Save failed', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 p-3 border border-emerald-200 dark:border-emerald-700 rounded-lg bg-emerald-50/50 dark:bg-slate-800 space-y-3">
+      <div className="grid sm:grid-cols-3 gap-3">
+        <Field label="Colour name">
+          <TextInput value={color} onChange={(e) => setColor(e.target.value)} placeholder="e.g. Crimson Red" />
+        </Field>
+        <Field label="Swatch (hex)">
+          <div className="flex items-center gap-2">
+            <input type="color" value={hex} onChange={(e) => setHex(e.target.value)}
+              className="w-12 h-10 rounded border border-slate-200 cursor-pointer shrink-0" />
+            <TextInput value={hex} onChange={(e) => setHex(e.target.value)} />
+          </div>
+        </Field>
+        <Field label="Stock for this colour">
+          <TextInput type="number" min="0" step="1" value={stock} onChange={(e) => setStock(e.target.value)} />
+        </Field>
+      </div>
+      <div>
+        <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1.5">Photos for this colour ({images.length}/5) <span className="text-slate-400 font-normal">— at least one required</span></div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {[0, 1, 2, 3, 4].map((i) => {
+            const url = images[i];
+            const slotDisabled = submitting || uploading;
+            return (
+              <div key={i} className="relative aspect-[3/4] rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 overflow-hidden group">
+                {url ? (
+                  <>
+                    <ProductImage src={url} alt={`Photo ${i + 1}`} className="absolute inset-0 w-full h-full object-cover" />
+                    {i === 0 && (
+                      <span className="absolute top-1 left-1 inline-flex items-center gap-1 bg-emerald-600 text-white text-[9px] font-bold px-1 py-0.5 rounded">PRIMARY</span>
+                    )}
+                    <button type="button"
+                      onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
+                      disabled={slotDisabled}
+                      className="absolute top-1 right-1 bg-white/95 hover:bg-red-50 text-red-600 rounded-full w-6 h-6 flex items-center justify-center shadow opacity-0 group-hover:opacity-100 transition">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <input id={`variant-img-upload-${i}`} type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      className="hidden" disabled={slotDisabled}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setUploading(true);
+                        try {
+                          const r = await adminApi.uploadProductImage(file);
+                          setImages(prev => [...prev, r.data.url].slice(0, 5));
+                        } catch (err) {
+                          toast.push(err.message || 'Upload failed', 'error');
+                        } finally {
+                          setUploading(false);
+                          e.target.value = '';
+                        }
+                      }} />
+                    <label htmlFor={`variant-img-upload-${i}`}
+                      className={`absolute inset-0 flex flex-col items-center justify-center gap-1 transition ${
+                        slotDisabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-600'
+                      }`}>
+                      {uploading ? <Loader2 className="w-4 h-4 text-slate-400 animate-spin" /> : <ImagePlus className="w-4 h-4 text-slate-400" />}
+                      <span className="text-[10px] text-slate-500">Add</span>
+                    </label>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="flex gap-2 justify-end pt-1">
+        <button type="button" onClick={onCancel} disabled={submitting}
+          className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-white text-xs font-semibold">Cancel</button>
+        <button type="button" onClick={submit} disabled={submitting || uploading}
+          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white text-xs font-semibold">
+          {submitting ? 'Saving…' : (initial.variant_id ? 'Update colour' : 'Add colour')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Single modal handles both create (no target) and edit (target supplied).
 // Keeps the form fields and validation in one place.
 function ProductFormModal({ open, target, categories, onClose, onSaved }) {
@@ -1826,7 +2043,10 @@ function ProductFormModal({ open, target, categories, onClose, onSaved }) {
   const blank = {
     name: '', category_id: scopedCategories[0]?.category_id || '', description: '',
     price_per_unit: '', unit: 'kg', stock_quantity: '', is_organic: false,
-    image: '', freshness: '', status: 'Active', is_returnable: true,
+    // Gallery of up to 5 photos. images[0] is the primary shown in list
+    // cards / cart / order summaries — the backend re-derives the legacy
+    // `image` column from it on every write.
+    images: [], freshness: '', status: 'Active', is_returnable: true,
     discount_percent: '0', translations: {},
   };
   const [form, setForm] = useState(blank);
@@ -1845,7 +2065,12 @@ function ProductFormModal({ open, target, categories, onClose, onSaved }) {
         unit: target.unit,
         stock_quantity: String(target.stock_quantity),
         is_organic: target.is_organic,
-        image: target.image,
+        // Prefer the new gallery field; fall back to wrapping the legacy
+        // single image so admins editing pre-migration rows still see
+        // their photo in the first slot.
+        images: Array.isArray(target.images) && target.images.length > 0
+          ? target.images
+          : (target.image ? [target.image] : []),
         freshness: target.freshness || '',
         status: target.status,
         is_returnable: target.is_returnable !== false, // default true if missing
@@ -1864,10 +2089,10 @@ function ProductFormModal({ open, target, categories, onClose, onSaved }) {
   const onSubmit = async (e) => {
     e.preventDefault();
     setErrors({});
-    if (!form.image) {
-      // Image is server-required (Product.image is non-null) — surface a
-      // friendly error instead of a generic backend zod failure.
-      setErrors({ image: 'Please upload a product image' });
+    if (!form.images || form.images.length === 0) {
+      // At least one photo required (Product.image is non-null server-side).
+      // Surface a friendly error instead of a generic backend Zod failure.
+      setErrors({ images: 'Please upload at least one product photo' });
       return;
     }
     setSubmitting(true);
@@ -1879,7 +2104,11 @@ function ProductFormModal({ open, target, categories, onClose, onSaved }) {
       unit: form.unit,
       stock_quantity: Number(form.stock_quantity),
       is_organic: form.is_organic,
-      image: form.image.trim(),
+      // Send both fields so older backend deploys (single `image` only)
+      // still accept the create — the multi-image normalizer is the
+      // source of truth on backends that have the migration applied.
+      image: form.images[0],
+      images: form.images,
       freshness: form.freshness.trim() || null,
       status: form.status,
       is_returnable: form.is_returnable,
@@ -1959,58 +2188,87 @@ function ProductFormModal({ open, target, categories, onClose, onSaved }) {
             onChange={(e) => setForm((f) => ({ ...f, discount_percent: e.target.value }))} />
         </Field>
 
-        <Field label="Product image" error={errors.image}
-          hint="JPEG, PNG, WEBP or GIF up to 5 MB. Replaces the legacy emoji on this product.">
-          {/* Hidden <input type="file"> wired to the visible button via htmlFor.
-              On pick: upload immediately, store the returned URL on form.image,
-              keep the file input value cleared so re-picking the same file
-              still fires onChange. Edit mode shows whatever's already on the
-              product (emoji OR uploaded image) until the admin replaces it. */}
-          <div className="flex items-center gap-3">
-            <div className="w-20 h-20 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-3xl overflow-hidden shrink-0">
-              {form.image
-                ? <ProductImage src={form.image} alt="preview" />
-                : <ImagePlus className="w-6 h-6 text-slate-300" />}
-            </div>
-            <div className="flex-1 min-w-0">
-              <input id="product-image-upload" type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                disabled={uploading || submitting}
-                className="hidden"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  setUploading(true);
-                  try {
-                    const r = await adminApi.uploadProductImage(file);
-                    setForm((f) => ({ ...f, image: r.data.url }));
-                    setErrors((er) => ({ ...er, image: undefined }));
-                    toast.push('Image uploaded');
-                  } catch (err) {
-                    toast.push(err.message || 'Upload failed', 'error');
-                  } finally {
-                    setUploading(false);
-                    e.target.value = '';
-                  }
-                }} />
-              <label htmlFor="product-image-upload"
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition ${
-                  uploading || submitting
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-slate-900 hover:bg-slate-800 text-white cursor-pointer'
-                }`}>
-                {uploading
-                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…</>
-                  : <><ImagePlus className="w-3.5 h-3.5" /> {form.image ? 'Replace image' : 'Upload image'}</>}
-              </label>
-              {form.image && (
-                <button type="button" onClick={() => setForm((f) => ({ ...f, image: '' }))}
-                  disabled={uploading || submitting}
-                  className="ml-2 inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-red-600">
-                  <Trash2 className="w-3 h-3" /> Remove
-                </button>
-              )}
-            </div>
+        <Field label={`Product photos (${form.images.length}/5)`} error={errors.images || errors.image}
+          hint="Up to 5 photos — front / back / detail / draped / styled. The first photo is the primary shown in product lists and the cart. JPEG, PNG, WEBP or GIF up to 5 MB each.">
+          {/* Five-slot gallery uploader. Each filled slot can be set as
+              primary (moves it to position 0) or removed. Empty slots
+              accept a new upload via a hidden <input type="file">. We
+              cap at 5 client-side; the backend Zod schema enforces the
+              same cap server-side. */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            {[0, 1, 2, 3, 4].map((i) => {
+              const url = form.images[i];
+              const slotDisabled = uploading || submitting;
+              return (
+                <div key={i} className="relative aspect-[3/4] rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-700 overflow-hidden group">
+                  {url ? (
+                    <>
+                      <ProductImage src={url} alt={`Photo ${i + 1}`} className="absolute inset-0 w-full h-full object-cover" />
+                      {i === 0 && (
+                        <span className="absolute top-1.5 left-1.5 inline-flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow">
+                          <Star className="w-2.5 h-2.5 fill-current" /> PRIMARY
+                        </span>
+                      )}
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center gap-1.5 p-2">
+                        {i > 0 && (
+                          <button type="button"
+                            onClick={() => setForm((f) => {
+                              const next = [...f.images];
+                              const [moved] = next.splice(i, 1);
+                              next.unshift(moved);
+                              return { ...f, images: next };
+                            })}
+                            disabled={slotDisabled}
+                            className="w-full inline-flex items-center justify-center gap-1 bg-white/95 hover:bg-white text-slate-900 text-[10px] font-semibold px-2 py-1 rounded transition">
+                            <Star className="w-3 h-3" /> Set primary
+                          </button>
+                        )}
+                        <button type="button"
+                          onClick={() => setForm((f) => ({ ...f, images: f.images.filter((_, j) => j !== i) }))}
+                          disabled={slotDisabled}
+                          className="w-full inline-flex items-center justify-center gap-1 bg-red-600 hover:bg-red-700 text-white text-[10px] font-semibold px-2 py-1 rounded transition">
+                          <Trash2 className="w-3 h-3" /> Remove
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <input id={`product-image-upload-${i}`} type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        disabled={slotDisabled}
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setUploading(true);
+                          try {
+                            const r = await adminApi.uploadProductImage(file);
+                            setForm((f) => ({ ...f, images: [...f.images, r.data.url].slice(0, 5) }));
+                            setErrors((er) => ({ ...er, images: undefined, image: undefined }));
+                            toast.push('Photo added');
+                          } catch (err) {
+                            toast.push(err.message || 'Upload failed', 'error');
+                          } finally {
+                            setUploading(false);
+                            e.target.value = '';
+                          }
+                        }} />
+                      <label htmlFor={`product-image-upload-${i}`}
+                        className={`absolute inset-0 flex flex-col items-center justify-center gap-1 transition ${
+                          slotDisabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-600'
+                        }`}>
+                        {uploading
+                          ? <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+                          : <ImagePlus className="w-5 h-5 text-slate-400" />}
+                        <span className="text-[10px] font-medium text-slate-500">
+                          {i === 0 && form.images.length === 0 ? 'Primary' : 'Add photo'}
+                        </span>
+                      </label>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Field>
 
@@ -2050,6 +2308,8 @@ function ProductFormModal({ open, target, categories, onClose, onSaved }) {
             </label>
           </div>
         </div>
+
+        {isEdit && <VariantEditor productId={target.product_id} />}
 
         <div className="flex gap-2 pt-2">
           <button type="button" onClick={onClose}
@@ -2133,7 +2393,8 @@ function AdminCategoriesPage() {
         ) : cats.length === 0 ? (
           <div className="p-12 text-center text-slate-500">No categories yet.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Icon</th>
@@ -2178,6 +2439,7 @@ function AdminCategoriesPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -2436,7 +2698,8 @@ function AdminCouponsPage() {
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-slate-500">No coupons match these filters.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Code</th>
@@ -2486,6 +2749,7 @@ function AdminCouponsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -2750,7 +3014,8 @@ function AdminCustomersPage() {
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-slate-500">No customers match these filters.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Customer</th>
@@ -2792,6 +3057,7 @@ function AdminCustomersPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         {meta && meta.totalPages > 1 && (
@@ -5036,7 +5302,8 @@ function AdminReviewsPage() {
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-slate-500">No reviews match these filters.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Product</th>
@@ -5082,6 +5349,7 @@ function AdminReviewsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         {meta && meta.totalPages > 1 && (

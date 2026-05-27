@@ -7,7 +7,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { api, resolveImageUrl } from './api';
 import { ProductCard, ProductImage, Field, TextInput, SelectInput } from './components';
-import { useCart, useAuth, useWishlist, useToast, useSettings, canCancelOrderClient } from './contexts';
+import { useCart, useAuth, useWishlist, useToast, useSettings, canCancelOrderClient, cartLineKey } from './contexts';
 import { formatCurrency, formatDateTime } from './lib/format';
 import { LuxuryBackground } from './LuxuryBackground';
 
@@ -597,7 +597,9 @@ export function HomePage({ onNavigate }) {
               className="reveal-up relative aspect-[3/4] rounded-3xl flex items-center justify-center text-[15rem] cursor-pointer overflow-hidden"
               style={{ background: 'linear-gradient(180deg, #f5e8c7 0%, #fdf8ef 60%, #f5e8c7 100%)', border: '1px solid rgba(200,155,60,0.35)' }}
               onClick={() => onNavigate('product', { id: editorsPick.id })}>
-              <span aria-hidden="true" style={{ filter: 'drop-shadow(0 14px 32px rgba(74,15,26,0.35))' }}>{editorsPick.image}</span>
+              {resolveImageUrl(editorsPick.image)
+                ? <img src={resolveImageUrl(editorsPick.image)} alt={editorsPick.name} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                : <span aria-hidden="true" style={{ filter: 'drop-shadow(0 14px 32px rgba(74,15,26,0.35))' }}>{editorsPick.image}</span>}
               <span className="luxury-badge absolute top-5 left-5">Editor's Pick</span>
             </div>
             <div className="reveal-up" style={{ transitionDelay: '120ms' }}>
@@ -868,6 +870,15 @@ export function ProductDetailsPage({ params, onNavigate }) {
   const [related, setRelated] = useState([]);
   const [qty, setQty] = useState(1);
   const [loading, setLoading] = useState(true);
+  // Index into product.images for the gallery's "currently showing" photo.
+  // Reset whenever the visitor navigates to a different SKU so we never
+  // show product B's 4th photo because product A had 5 and B has 2.
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  // Currently picked colour variant. Null when the product has no
+  // variants (single-SKU mode) or before the product has loaded. When
+  // set, the gallery swaps to that variant's photos and the stock /
+  // add-to-cart use the variant's inventory.
+  const [selectedVariantId, setSelectedVariantId] = useState(null);
 
   // Compute the next available slot at render time. Cheap (5-entry array
   // scan) and the customer's clock advancing across a cutoff while sitting
@@ -879,10 +890,19 @@ export function ProductDetailsPage({ params, onNavigate }) {
   const nextSlot = getNextAvailableSlot(new Date(), settings.delivery_slot_buffer_hours ?? 5, settings.delivery_slots);
 
   useEffect(() => {
+    setActiveImageIndex(0);
+    setSelectedVariantId(null);
     Promise.all([api.getProduct(params.id), api.getProducts()]).then(([r, all]) => {
       setProduct(r.data);
       if (r.data) {
         setRelated(all.data.filter(p => p.category === r.data.category && p.id !== r.data.id).slice(0, 4));
+        // Default to the first in-stock variant so the gallery has
+        // something to show; falls back to the first variant if all
+        // are out of stock so the swatch row still renders.
+        if (Array.isArray(r.data.variants) && r.data.variants.length > 0) {
+          const firstInStock = r.data.variants.find((v) => v.stock > 0) || r.data.variants[0];
+          setSelectedVariantId(firstInStock.variant_id);
+        }
       }
       setLoading(false);
     });
@@ -903,13 +923,54 @@ export function ProductDetailsPage({ params, onNavigate }) {
         <ArrowLeft className="w-4 h-4" /> {t('products.backToShop')}
       </button>
 
+      {/* Compute variant-aware view once and reuse below for the
+          gallery, swatch row, stock badge, and add-to-cart payload. */}
+      {(() => null)()}
       <div className="grid md:grid-cols-2 gap-8 lg:gap-12">
-        <div className="relative bg-gradient-to-br from-stone-50 to-emerald-50 rounded-3xl aspect-square flex items-center justify-center text-[200px] shadow-inner overflow-hidden">
-          <ProductImage src={product.image} alt={product.name} className="w-full h-full object-cover rounded-3xl" />
-          {product.isOrganic && (
-            <span className="absolute top-4 left-4 bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">{t('products.organic')}</span>
-          )}
-        </div>
+        {/* Gallery — when the product has colour variants, the gallery
+            shows the SELECTED variant's photos (each variant carries
+            its own required photo set). Otherwise falls back to the
+            product's own images array (multi-image v1). */}
+        {(() => {
+          const hasVariants = Array.isArray(product.variants) && product.variants.length > 0;
+          const selectedVariant = hasVariants
+            ? product.variants.find((v) => v.variant_id === selectedVariantId) || product.variants[0]
+            : null;
+          const gallery = selectedVariant
+            ? (selectedVariant.images || [])
+            : ((product.images && product.images.length > 0) ? product.images : (product.image ? [product.image] : []));
+          const safeIndex = Math.min(activeImageIndex, Math.max(0, gallery.length - 1));
+          const activeImage = gallery[safeIndex] || (selectedVariant?.images?.[0]) || product.image;
+          return (
+            <div>
+              <div className="relative bg-gradient-to-br from-stone-50 to-emerald-50 rounded-3xl aspect-[3/4] flex items-center justify-center text-[200px] shadow-inner overflow-hidden">
+                <ProductImage src={activeImage} alt={product.name} className="absolute inset-0 w-full h-full object-cover rounded-3xl" />
+                {product.isOrganic && (
+                  <span className="absolute top-4 left-4 bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">{t('products.organic')}</span>
+                )}
+              </div>
+              {gallery.length > 1 && (
+                <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
+                  {gallery.map((src, i) => (
+                    <button
+                      key={`${src}-${i}`}
+                      type="button"
+                      onClick={() => setActiveImageIndex(i)}
+                      aria-label={`Show photo ${i + 1} of ${gallery.length}`}
+                      aria-pressed={i === safeIndex}
+                      className={`flex-shrink-0 w-20 h-24 rounded-xl overflow-hidden border-2 transition relative bg-gradient-to-br from-stone-50 to-emerald-50 ${
+                        i === safeIndex
+                          ? 'border-emerald-600 ring-2 ring-emerald-200'
+                          : 'border-stone-200 hover:border-stone-400'
+                      }`}>
+                      <ProductImage src={src} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         <div>
           <div className="flex items-center gap-2 text-sm text-amber-600 mb-2">
@@ -944,33 +1005,104 @@ export function ProductDetailsPage({ params, onNavigate }) {
             <span className="text-stone-500">{t('common.perUnit', { unit: product.unit })}</span>
           </div>
 
-          {product.stock === 0 ? (
-            <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-6 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5" /> {t('products.currentlyOutOfStock')}
-            </div>
-          ) : (
-            <>
+          {/* Colour-variant picker — only rendered when the product
+              has 1+ variants. Each swatch shows the colour name on
+              hover/below; out-of-stock variants get a slash overlay
+              and can't be selected. Stock + add-to-cart below derive
+              their numbers from whichever variant is selected. */}
+          {(() => {
+            const variants = Array.isArray(product.variants) ? product.variants : [];
+            if (variants.length === 0) return null;
+            const selected = variants.find((v) => v.variant_id === selectedVariantId) || variants[0];
+            return (
               <div className="mb-6">
-                <label className="text-sm font-medium text-stone-700 mb-2 block">{t('products.quantity')}</label>
-                <div className="inline-flex items-center bg-stone-100 rounded-xl">
-                  <button onClick={() => setQty(Math.max(1, qty - 1))} className="p-3 hover:bg-stone-200 rounded-l-xl transition"><Minus className="w-4 h-4" /></button>
-                  <span className="px-6 font-semibold">{qty}</span>
-                  <button onClick={() => setQty(qty + 1)} className="p-3 hover:bg-stone-200 rounded-r-xl transition"><Plus className="w-4 h-4" /></button>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold text-stone-700">Colour: <span className="text-stone-900">{selected.color}</span></span>
+                  <span className="text-xs text-stone-500">{variants.length} option{variants.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {variants.map((v) => {
+                    const isSelected = v.variant_id === selected.variant_id;
+                    const isOut = Number(v.stock) <= 0;
+                    return (
+                      <button
+                        key={v.variant_id}
+                        type="button"
+                        disabled={isOut}
+                        onClick={() => { setSelectedVariantId(v.variant_id); setActiveImageIndex(0); }}
+                        title={v.color + (isOut ? ' (out of stock)' : '')}
+                        aria-label={`Select colour ${v.color}`}
+                        aria-pressed={isSelected}
+                        className={`relative w-11 h-11 rounded-full border-2 transition shrink-0 ${
+                          isSelected ? 'border-emerald-600 ring-2 ring-emerald-200 ring-offset-2' : 'border-white shadow ring-1 ring-stone-200 hover:ring-stone-400'
+                        } ${isOut ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        style={{ background: v.color_hex }}>
+                        {isOut && (
+                          <span className="absolute inset-0 flex items-center justify-center text-stone-700 font-bold text-lg">/</span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+            );
+          })()}
 
-              <div className="flex flex-wrap gap-3 mb-8">
-                <button onClick={() => { addItem(product, qty); toast.push(t('products.qtyAdded', { qty, name: product.name })); }}
-                  className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-4 rounded-xl font-semibold shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2">
-                  <ShoppingCart className="w-4 h-4" /> {t('products.addToCartWithPrice', { price: formatINR(product.price * qty) })}
-                </button>
-                <button onClick={() => { addItem(product, qty); onNavigate('cart'); }}
-                  className="bg-stone-900 hover:bg-stone-800 text-white px-8 py-4 rounded-xl font-semibold transition">
-                  {t('products.buyNow')}
-                </button>
-              </div>
-            </>
-          )}
+          {(() => {
+            // Effective stock / variant-aware add-to-cart. When the
+            // product has variants, the chosen variant's stock and
+            // variant_id flow into addItem; otherwise the legacy single-
+            // SKU path runs unchanged.
+            const variants = Array.isArray(product.variants) ? product.variants : [];
+            const selectedVariant = variants.length > 0
+              ? (variants.find((v) => v.variant_id === selectedVariantId) || variants[0])
+              : null;
+            const effectiveStock = selectedVariant ? Number(selectedVariant.stock) : product.stock;
+
+            if (effectiveStock === 0) {
+              return (
+                <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-6 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5" />
+                  {selectedVariant
+                    ? `${selectedVariant.color} is currently out of stock`
+                    : t('products.currentlyOutOfStock')}
+                </div>
+              );
+            }
+
+            const handleAdd = (navigateAfter = false) => {
+              addItem(product, qty, selectedVariant);
+              if (navigateAfter) onNavigate('cart');
+              else toast.push(t('products.qtyAdded', { qty, name: product.name }));
+            };
+
+            return (
+              <>
+                <div className="mb-6">
+                  <label className="text-sm font-medium text-stone-700 mb-2 block">{t('products.quantity')}</label>
+                  <div className="inline-flex items-center bg-stone-100 rounded-xl">
+                    <button onClick={() => setQty(Math.max(1, qty - 1))} className="p-3 hover:bg-stone-200 rounded-l-xl transition"><Minus className="w-4 h-4" /></button>
+                    <span className="px-6 font-semibold">{qty}</span>
+                    <button onClick={() => setQty(qty + 1)} className="p-3 hover:bg-stone-200 rounded-r-xl transition"><Plus className="w-4 h-4" /></button>
+                  </div>
+                  {selectedVariant && (
+                    <p className="text-xs text-stone-500 mt-1.5">{effectiveStock} in stock for {selectedVariant.color}</p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-3 mb-8">
+                  <button onClick={() => handleAdd(false)}
+                    className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-4 rounded-xl font-semibold shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2">
+                    <ShoppingCart className="w-4 h-4" /> {t('products.addToCartWithPrice', { price: formatINR(product.price * qty) })}
+                  </button>
+                  <button onClick={() => handleAdd(true)}
+                    className="bg-stone-900 hover:bg-stone-800 text-white px-8 py-4 rounded-xl font-semibold transition">
+                    {t('products.buyNow')}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-6 border-t border-stone-200">
             {buildProductBadges(settings, product, nextSlot).map((b, i) => (
@@ -1348,12 +1480,24 @@ export function CartPage({ onNavigate }) {
       <div className="grid lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-3">
           {items.map(item => (
-            <div key={item.id} className="bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-700 rounded-2xl p-4 flex gap-4 items-center">
+            <div key={cartLineKey(item)} className="bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-700 rounded-2xl p-4 flex gap-4 items-center">
               <div className="w-20 h-20 bg-gradient-to-br from-stone-50 to-emerald-50 rounded-xl flex items-center justify-center text-4xl shrink-0 overflow-hidden">
                 <ProductImage src={item.image} alt={item.name} className="w-full h-full object-cover" />
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-semibold text-stone-900 truncate">{item.name}</h3>
+                {/* Show the colour name (with a swatch dot) under the
+                    product name when this line is for a variant. The
+                    label is the snapshot taken at add-to-cart time, so
+                    it never changes if the admin later renames it. */}
+                {item.variant_color && (
+                  <p className="text-xs text-stone-500 mt-0.5 inline-flex items-center gap-1.5">
+                    {item.variant_color_hex && (
+                      <span className="w-3 h-3 rounded-full border border-white shadow-sm ring-1 ring-stone-200" style={{ background: item.variant_color_hex }} />
+                    )}
+                    Colour: <span className="text-stone-700 font-medium">{item.variant_color}</span>
+                  </p>
+                )}
                 {/* Per-unit price: MRP strikethrough + discounted price when
                     item carries a discount, plain price otherwise. mrp may
                     be missing on cart items added before refreshPrices ran;
@@ -1372,11 +1516,11 @@ export function CartPage({ onNavigate }) {
                 </p>
                 <div className="flex items-center gap-3 mt-2">
                   <div className="inline-flex items-center bg-stone-100 rounded-lg">
-                    <button onClick={() => updateQty(item.id, item.qty - 1)} className="p-2 hover:bg-stone-200 rounded-l-lg transition"><Minus className="w-3 h-3" /></button>
+                    <button onClick={() => updateQty(cartLineKey(item), item.qty - 1)} className="p-2 hover:bg-stone-200 rounded-l-lg transition"><Minus className="w-3 h-3" /></button>
                     <span className="px-3 text-sm font-semibold">{item.qty}</span>
-                    <button onClick={() => updateQty(item.id, item.qty + 1)} className="p-2 hover:bg-stone-200 rounded-r-lg transition"><Plus className="w-3 h-3" /></button>
+                    <button onClick={() => updateQty(cartLineKey(item), item.qty + 1)} className="p-2 hover:bg-stone-200 rounded-r-lg transition"><Plus className="w-3 h-3" /></button>
                   </div>
-                  <button onClick={() => removeItem(item.id)} className="text-red-600 hover:text-red-700 text-sm flex items-center gap-1">
+                  <button onClick={() => removeItem(cartLineKey(item))} className="text-red-600 hover:text-red-700 text-sm flex items-center gap-1">
                     <Trash2 className="w-3 h-3" /> {t('common.remove')}
                   </button>
                 </div>
@@ -2842,7 +2986,14 @@ export function CheckoutPage({ onNavigate }) {
         address_id: addrId,
         delivery_slot: slot,
         payment_method: payment,
-        items: cart.items.map(i => ({ product_id: i.id, qty: i.qty })),
+        items: cart.items.map(i => ({
+          product_id: i.id,
+          // Send variant_id when the cart line was added with a colour.
+          // Backend rejects unknown variant_ids and requires one for
+          // products that have variants, so this is authoritative.
+          ...(i.variant_id ? { variant_id: i.variant_id } : {}),
+          qty: i.qty,
+        })),
         coupon_code: coupon.trim() || undefined,
         // Live-pin override (optional). Null when the customer didn't tap
         // the "Share live location" tile — order falls back to the saved

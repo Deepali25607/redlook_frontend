@@ -457,8 +457,8 @@ export function ProductCard({ product, onClick, onAdd }) {
 
   return (
     <div onClick={onClick} className="luxury-card group bg-white rounded-2xl cursor-pointer overflow-hidden">
-      <div className="luxury-card-image relative aspect-square bg-gradient-to-br from-amber-50 via-rose-50 to-amber-100 flex items-center justify-center text-7xl">
-        <ProductImage src={product.image} alt={product.name} />
+      <div className="luxury-card-image relative aspect-[3/4] bg-gradient-to-br from-amber-50 via-rose-50 to-amber-100 flex items-center justify-center text-7xl">
+        <ProductImage src={product.image} alt={product.name} className="absolute inset-0 w-full h-full object-cover" />
         {product.isOrganic && (
           // Repurposed as the "Premium / Heritage" tag for sarees & lehengas
           // (locale key `products.organic` now renders "PREMIUM").

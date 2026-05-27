@@ -116,6 +116,12 @@ export const useCart = () => useContext(CartContext);
 
 const cartKey = (userId) => `redlook_cart_${userId || 'guest'}_v1`;
 
+// Stable per-line identity. Multi-colour products live as separate
+// cart lines, so a single product_id can correspond to several rows.
+// Legacy items (saved before variants existed) have no variant_id and
+// fall back to product_id alone, so their lineKey is unchanged.
+export const cartLineKey = (item) => item.variant_id ? `${item.id}::${item.variant_id}` : item.id;
+
 export function CartProvider({ children }) {
   const auth = useAuth();
   const userId = auth?.user?.customer_id;
@@ -138,18 +144,49 @@ export function CartProvider({ children }) {
     localStorage.setItem(cartKey(userId), JSON.stringify(items));
   }, [items, userId, auth?.hydrated]);
 
-  const addItem = (product, qty = 1) => {
+  // `variant` is optional. When the customer adds a colour-variant
+  // product, pass the chosen variant ({variant_id, color, color_hex,
+  // images}) so the cart line shows the colour name and the variant's
+  // own primary photo. Two colours of the same product live as two
+  // separate cart lines, matched on the composite lineKey.
+  const addItem = (product, qty = 1, variant = null) => {
     setItems(prev => {
-      const existing = prev.find(i => i.id === product.id);
-      if (existing) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + qty } : i);
-      return [...prev, { id: product.id, name: product.name, price: product.price, mrp: product.mrp, unit: product.unit, image: product.image, qty }];
+      const targetKey = cartLineKey(variant ? { id: product.id, variant_id: variant.variant_id } : { id: product.id });
+      const existing = prev.find(i => cartLineKey(i) === targetKey);
+      if (existing) {
+        return prev.map(i => cartLineKey(i) === targetKey ? { ...i, qty: i.qty + qty } : i);
+      }
+      const line = {
+        id: product.id,
+        name: product.name,
+        price: product.price,
+        mrp: product.mrp,
+        unit: product.unit,
+        // Variant's primary photo wins so the cart thumbnail matches
+        // the colour the customer picked; otherwise the product's
+        // legacy `image` field is used.
+        image: variant && Array.isArray(variant.images) && variant.images.length > 0
+          ? variant.images[0]
+          : product.image,
+        qty,
+      };
+      if (variant) {
+        line.variant_id = variant.variant_id;
+        line.variant_color = variant.color;
+        line.variant_color_hex = variant.color_hex;
+      }
+      return [...prev, line];
     });
   };
-  const updateQty = (id, qty) => {
-    if (qty <= 0) return removeItem(id);
-    setItems(prev => prev.map(i => i.id === id ? { ...i, qty } : i));
+  // updateQty/removeItem now key on the composite lineKey instead of
+  // product_id alone. Callers should pass cartLineKey(item) — legacy
+  // calls passing item.id still work for items with no variant_id
+  // because lineKey(no-variant) === id.
+  const updateQty = (lineKey, qty) => {
+    if (qty <= 0) return removeItem(lineKey);
+    setItems(prev => prev.map(i => cartLineKey(i) === lineKey ? { ...i, qty } : i));
   };
-  const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id));
+  const removeItem = (lineKey) => setItems(prev => prev.filter(i => cartLineKey(i) !== lineKey));
   const clearCart = () => setItems([]);
 
   // Re-pull current prices for everything in the cart. Cart items are

@@ -770,6 +770,16 @@ export const adminApi = {
   updateProduct: (id, data) => adminPut(`/products/${id}`, data),
   disableProduct: (id) => adminDel(`/products/${id}`),
 
+  // Colour-variant CRUD nested under a product. Variants are opt-in:
+  // a product with zero variants behaves as a single SKU. Adding ≥1
+  // switches the storefront to a colour picker and per-variant stock
+  // becomes authoritative. Each variant owns its own required photo
+  // gallery (no fallback to parent product photos).
+  listVariants:  (productId)                  => adminCall(`/products/${productId}/variants`),
+  createVariant: (productId, data)            => adminPost(`/products/${productId}/variants`, data),
+  updateVariant: (productId, variantId, data) => adminPut(`/products/${productId}/variants/${variantId}`, data),
+  deleteVariant: (productId, variantId)       => adminDel(`/products/${productId}/variants/${variantId}`),
+
   // Product image upload — multipart, returns { url: '/uploads/products/<file>' }.
   // Caller stores the returned `url` in Product.image. Mock mode short-circuits
   // to a transient data: URL so admins can preview locally without a backend.
