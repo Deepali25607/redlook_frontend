@@ -524,7 +524,9 @@ export function HomePage({ onNavigate }) {
                   className="editorial-product-card reveal-up"
                   onClick={() => onNavigate('product', { id: p.id })}>
                   <div className="epc-frame">
-                    <span aria-hidden="true" style={{ filter: 'drop-shadow(0 8px 18px rgba(74,15,26,0.25))' }}>{p.image}</span>
+                    {resolveImageUrl(p.image)
+                      ? <img src={resolveImageUrl(p.image)} alt={p.name} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                      : <span aria-hidden="true" style={{ filter: 'drop-shadow(0 8px 18px rgba(74,15,26,0.25))' }}>{p.image}</span>}
                     {p.isOrganic && (
                       <span className="luxury-badge absolute top-3 left-3">{t('products.organic')}</span>
                     )}
