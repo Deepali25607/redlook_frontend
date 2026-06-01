@@ -604,6 +604,15 @@ export const api = {
   verifyResetOtp: (customer_id, otp) => post('/auth/verify-reset-otp', { customer_id, otp }),
   resetPassword: (token, new_password) => post('/auth/reset-password', { token, new_password }),
 
+  // Firebase Phone Auth path — only used when VITE_AUTH_PROVIDER=firebase.
+  // The frontend pages call sendOtp/verifyOtpAndGetToken in lib/firebase.js
+  // to get a verified Firebase ID token, then post that token to the
+  // server here. The legacy methods above stay in place for the MSG91
+  // path (toggle-controlled in the page components).
+  firebaseLogin:         (idToken) => post('/auth/firebase-login', { idToken }),
+  firebaseRegister:      (idToken, profile) => post('/auth/firebase-register', { idToken, ...profile }),
+  firebaseResetPassword: (idToken, new_password) => post('/auth/firebase-reset-password', { idToken, new_password }),
+
   // Profile
   getUser: (id) => apiCall(`/users/${id}`),
   updateUser: (id, data) => put(`/users/${id}`, data),

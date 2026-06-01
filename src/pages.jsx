@@ -10,6 +10,7 @@ import { ProductCard, ProductImage, Field, TextInput, SelectInput } from './comp
 import { useCart, useAuth, useWishlist, useToast, useSettings, canCancelOrderClient, cartLineKey } from './contexts';
 import { formatCurrency, formatDateTime } from './lib/format';
 import { LuxuryBackground } from './LuxuryBackground';
+import { firebaseAuthEnabled, setupRecaptcha, sendOtp, verifyOtpAndGetToken, toE164 } from './lib/firebase';
 
 // ============================================================
 // Helpers — locale-aware via src/lib/format.js. Kept as thin aliases so
@@ -1614,6 +1615,12 @@ function AuthShell({ title, subtitle, children, footer }) {
 }
 
 export function LoginPage({ onNavigate }) {
+  // When the storefront is in Firebase-auth mode, swap the entire
+  // login UI for the passwordless phone-OTP flow. Legacy email-or-
+  // phone + password kept below for the MSG91 path so a flag flip
+  // back doesn't need a code change.
+  if (firebaseAuthEnabled) return <FirebaseLoginPage onNavigate={onNavigate} />;
+
   const { t } = useTranslation();
   const auth = useAuth();
   const toast = useToast();
@@ -1689,7 +1696,167 @@ export function LoginPage({ onNavigate }) {
   );
 }
 
-export function RegisterPage({ onNavigate }) {
+// Firebase Phone Auth variant of the login page. Mounted only when
+// VITE_AUTH_PROVIDER=firebase. Two-step: enter phone → Firebase sends
+// SMS via Google → enter the 6-digit code → backend verifies the
+// resulting ID token and issues our JWT.
+//
+// reCAPTCHA: Firebase requires an anti-abuse gate on web. We attach
+// it invisibly to the "Send code" button — 99% of customers never see
+// a challenge; Firebase only puts up a puzzle when it suspects a bot.
+function FirebaseLoginPage({ onNavigate }) {
+  const { t } = useTranslation();
+  const auth = useAuth();
+  const toast = useToast();
+  const [step, setStep] = useState('phone'); // 'phone' → 'otp'
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [confirmation, setConfirmation] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [busy, setBusy] = useState(false);
+  // Throttle "Resend code" so we don't burn the Firebase quota on
+  // panic-clickers. Matches the 60s window the backend used for MSG91.
+  const [resendIn, setResendIn] = useState(0);
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const tid = setTimeout(() => setResendIn((n) => Math.max(0, n - 1)), 1000);
+    return () => clearTimeout(tid);
+  }, [resendIn]);
+
+  const sendCode = async () => {
+    const e164 = toE164(phone);
+    if (!e164) {
+      setErrors({ phone: 'Enter a valid 10-digit Indian mobile.' });
+      return;
+    }
+    setErrors({});
+    setBusy(true);
+    try {
+      setupRecaptcha('firebase-send-otp-btn');
+      const conf = await sendOtp(e164);
+      setConfirmation(conf);
+      setStep('otp');
+      setResendIn(60);
+      toast.push('Code sent — check your SMS.');
+    } catch (err) {
+      // Firebase surfaces typed errors like auth/invalid-phone-number,
+      // auth/too-many-requests, auth/quota-exceeded. Surface a clean
+      // message and re-arm the form so the user can retry.
+      setErrors({ form: friendlyFirebaseError(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyCode = async (e) => {
+    e?.preventDefault?.();
+    if (!/^\d{6}$/.test(otp)) {
+      setErrors({ otp: 'Enter the 6-digit code.' });
+      return;
+    }
+    setErrors({});
+    setBusy(true);
+    try {
+      const idToken = await verifyOtpAndGetToken(confirmation, otp);
+      const { data } = await api.firebaseLogin(idToken);
+      auth.completeRegistration(data.user, data.token);
+      toast.push(t('auth.welcomeBackName', { name: data.user.full_name.split(' ')[0] }));
+      onNavigate('home');
+    } catch (err) {
+      // 404 from /auth/firebase-login means "no account for this
+      // phone" → bounce to the register flow with the phone pre-filled
+      // so the customer doesn't retype it.
+      if (err.code === 404 || err.status === 404) {
+        toast.push('No account found — please create one.');
+        onNavigate('register', { phone });
+        return;
+      }
+      setErrors({ form: friendlyFirebaseError(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <AuthShell title={t('auth.welcomeBack')} subtitle="Sign in with your phone number"
+      footer={<>{t('auth.noAccount')} <button onClick={() => onNavigate('register')} className="text-emerald-700 font-semibold hover:underline">{t('nav.register')}</button></>}>
+      <form onSubmit={(e) => { e.preventDefault(); step === 'phone' ? sendCode() : verifyCode(); }} className="space-y-4">
+        {errors.form && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" /> {errors.form}
+          </div>
+        )}
+
+        {step === 'phone' ? (
+          <>
+            <Field label="Mobile number" error={errors.phone}>
+              <div className="flex">
+                <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-stone-300 bg-stone-50 text-stone-600 text-sm">+91</span>
+                <TextInput
+                  type="tel" inputMode="numeric" maxLength={10}
+                  className="rounded-l-none"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="9876543210"
+                  error={errors.phone}
+                  autoFocus />
+              </div>
+            </Field>
+            <button id="firebase-send-otp-btn" type="submit" disabled={busy}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white py-3 rounded-xl font-semibold transition">
+              {busy ? 'Sending code…' : 'Send OTP'}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-stone-600">
+              Code sent to <span className="font-semibold text-stone-900">+91 {phone}</span>.
+              <button type="button" onClick={() => { setStep('phone'); setOtp(''); setConfirmation(null); }}
+                className="ml-2 text-emerald-700 hover:underline text-xs font-semibold">Change</button>
+            </p>
+            <Field label="6-digit code" error={errors.otp}>
+              <TextInput
+                type="tel" inputMode="numeric" maxLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
+                error={errors.otp}
+                autoFocus />
+            </Field>
+            <button type="submit" disabled={busy}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white py-3 rounded-xl font-semibold transition">
+              {busy ? 'Verifying…' : 'Verify & sign in'}
+            </button>
+            <button type="button" onClick={sendCode} disabled={busy || resendIn > 0}
+              className="w-full text-sm text-emerald-700 hover:underline disabled:text-stone-400 disabled:no-underline">
+              {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
+            </button>
+          </>
+        )}
+      </form>
+    </AuthShell>
+  );
+}
+
+// Map common Firebase auth/* error codes to copy a customer can act on.
+// Anything we don't recognise falls back to the raw message — that's
+// usually still readable enough ("Firebase: Error (auth/...)").
+function friendlyFirebaseError(err) {
+  const code = err?.code || err?.details?.code;
+  if (code === 'auth/invalid-phone-number')      return 'That phone number doesn\'t look valid.';
+  if (code === 'auth/invalid-verification-code') return 'The code you entered is incorrect.';
+  if (code === 'auth/code-expired')              return 'That code has expired — please request a new one.';
+  if (code === 'auth/too-many-requests')         return 'Too many attempts. Please wait a few minutes and try again.';
+  if (code === 'auth/quota-exceeded')            return 'SMS service is temporarily unavailable. Please try again shortly.';
+  if (code === 'auth/captcha-check-failed')      return 'reCAPTCHA check failed — please retry.';
+  return err?.message || 'Sign-in failed. Please try again.';
+}
+
+export function RegisterPage({ params, onNavigate }) {
+  // Firebase variant: passwordless phone-verify-first registration.
+  // Legacy MSG91 form below stays as the fallback path.
+  if (firebaseAuthEnabled) return <FirebaseRegisterPage params={params} onNavigate={onNavigate} />;
+
   const { t } = useTranslation();
   const toast = useToast();
   const [form, setForm] = useState({ full_name: '', email: '', phone: '', password: '', accept: false });
@@ -1780,6 +1947,187 @@ export function RegisterPage({ onNavigate }) {
           className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white py-3 rounded-xl font-semibold transition">
           {submitting ? t('auth.creatingAccount') : t('auth.createAccount')}
         </button>
+      </form>
+    </AuthShell>
+  );
+}
+
+// Firebase Phone Auth variant of registration. The legacy MSG91 path
+// is a 3-step dance (POST /register → SMS → POST /verify-otp); with
+// Firebase we collapse it to two screens: fill profile + verify phone,
+// then one backend call creates the Customer atomically.
+function FirebaseRegisterPage({ params, onNavigate }) {
+  const { t } = useTranslation();
+  const auth = useAuth();
+  const toast = useToast();
+  const [step, setStep] = useState('form');   // 'form' → 'otp'
+  const [form, setForm] = useState({
+    full_name: '',
+    email: '',
+    // Pre-filled when the FirebaseLoginPage bounced an unknown phone
+    // here so the customer doesn't retype what they just typed.
+    phone: (params?.phone || '').replace(/\D/g, '').slice(0, 10),
+    password: '',
+    accept: false,
+  });
+  const [showPwd, setShowPwd] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [confirmation, setConfirmation] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const tid = setTimeout(() => setResendIn((n) => Math.max(0, n - 1)), 1000);
+    return () => clearTimeout(tid);
+  }, [resendIn]);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+  const strength = passwordStrength(form.password, t);
+
+  // Validate profile fields client-side BEFORE sending the OTP so we
+  // don't burn Firebase quota on a form that's going to be rejected
+  // server-side anyway.
+  const validateProfile = () => {
+    const errs = {};
+    if (!form.full_name || form.full_name.trim().length < 2) errs.full_name = t('validation.enterFullName');
+    if (!/^\S+@\S+\.\S+$/.test(form.email)) errs.email = t('validation.enterValidEmail');
+    if (!/^[6-9]\d{9}$/.test(form.phone)) errs.phone = t('validation.enterIndianMobile');
+    const pErrKey = validatePasswordKey(form.password);
+    if (pErrKey) errs.password = t(pErrKey);
+    if (!form.accept) errs.accept = t('validation.acceptTermsRequired');
+    return errs;
+  };
+
+  const sendCode = async () => {
+    const errs = validateProfile();
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+
+    const e164 = toE164(form.phone);
+    if (!e164) { setErrors({ phone: t('validation.enterIndianMobile') }); return; }
+
+    setBusy(true);
+    try {
+      setupRecaptcha('firebase-register-otp-btn');
+      const conf = await sendOtp(e164);
+      setConfirmation(conf);
+      setStep('otp');
+      setResendIn(60);
+      toast.push('Code sent — check your SMS.');
+    } catch (err) {
+      setErrors({ form: friendlyFirebaseError(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyAndRegister = async (e) => {
+    e?.preventDefault?.();
+    if (!/^\d{6}$/.test(otp)) { setErrors({ otp: 'Enter the 6-digit code.' }); return; }
+    setErrors({});
+    setBusy(true);
+    try {
+      const idToken = await verifyOtpAndGetToken(confirmation, otp);
+      const { data } = await api.firebaseRegister(idToken, {
+        full_name: form.full_name.trim(),
+        email: form.email.trim().toLowerCase(),
+        password: form.password,
+      });
+      auth.completeRegistration(data.user, data.token);
+      toast.push(t('auth.accountCreated'));
+      onNavigate('home');
+    } catch (err) {
+      // 409 Conflict from backend → email or phone already used.
+      // Bounce to login with the phone pre-filled (existing customer
+      // can just verify and sign in instead).
+      if (err.code === 409 || err.status === 409) {
+        toast.push(err.message || 'Already registered — please log in.', 'info');
+        onNavigate('login');
+        return;
+      }
+      setErrors({ form: friendlyFirebaseError(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <AuthShell title={t('auth.createYourAccount')} subtitle={t('auth.startOrdering')}
+      footer={<>{t('auth.haveAccount')} <button onClick={() => onNavigate('login')} className="text-emerald-700 font-semibold hover:underline">{t('auth.logIn')}</button></>}>
+      <form onSubmit={(e) => { e.preventDefault(); step === 'form' ? sendCode() : verifyAndRegister(); }} className="space-y-4">
+        {errors.form && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" /> {errors.form}
+          </div>
+        )}
+
+        {step === 'form' ? (
+          <>
+            <Field label={t('auth.fullName')} error={errors.full_name}>
+              <TextInput value={form.full_name} onChange={set('full_name')} placeholder={t('auth.fullNamePlaceholder')} error={errors.full_name} autoFocus />
+            </Field>
+            <Field label={t('auth.email')} error={errors.email}>
+              <TextInput type="email" value={form.email} onChange={set('email')} placeholder={t('auth.emailPlaceholder')} error={errors.email} />
+            </Field>
+            <Field label="Mobile number" error={errors.phone} hint={t('auth.phoneHint')}>
+              <div className="flex">
+                <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-stone-300 bg-stone-50 text-stone-600 text-sm">+91</span>
+                <TextInput
+                  type="tel" inputMode="numeric" maxLength={10}
+                  className="rounded-l-none"
+                  value={form.phone}
+                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                  placeholder="9876543210"
+                  error={errors.phone} />
+              </div>
+            </Field>
+            <Field label={t('auth.password')} error={errors.password}>
+              <div className="relative">
+                <TextInput type={showPwd ? 'text' : 'password'} value={form.password} onChange={set('password')} placeholder={t('auth.passwordPlaceholder')} error={errors.password} />
+                <button type="button" onClick={() => setShowPwd((s) => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600" tabIndex={-1}>
+                  {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {form.password && (
+                <p className={`text-xs mt-1 ${strength.tone === 'strong' ? 'text-emerald-700' : strength.tone === 'okay' ? 'text-amber-600' : 'text-red-600'}`}>{strength.label}</p>
+              )}
+            </Field>
+            <label className="flex items-start gap-2 text-sm text-stone-600">
+              <input type="checkbox" checked={form.accept} onChange={set('accept')} className="w-4 h-4 mt-0.5 rounded text-emerald-600" />
+              <span>{t('auth.acceptTerms')}</span>
+            </label>
+            {errors.accept && <p className="text-red-600 text-xs">{errors.accept}</p>}
+            <button id="firebase-register-otp-btn" type="submit" disabled={busy}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white py-3 rounded-xl font-semibold transition">
+              {busy ? 'Sending code…' : 'Send verification code'}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-stone-600">
+              Code sent to <span className="font-semibold text-stone-900">+91 {form.phone}</span>.
+              <button type="button" onClick={() => { setStep('form'); setOtp(''); setConfirmation(null); }}
+                className="ml-2 text-emerald-700 hover:underline text-xs font-semibold">Change</button>
+            </p>
+            <Field label="6-digit code" error={errors.otp}>
+              <TextInput
+                type="tel" inputMode="numeric" maxLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
+                error={errors.otp}
+                autoFocus />
+            </Field>
+            <button type="submit" disabled={busy}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white py-3 rounded-xl font-semibold transition">
+              {busy ? 'Creating account…' : 'Verify & create account'}
+            </button>
+            <button type="button" onClick={sendCode} disabled={busy || resendIn > 0}
+              className="w-full text-sm text-emerald-700 hover:underline disabled:text-stone-400 disabled:no-underline">
+              {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
+            </button>
+          </>
+        )}
       </form>
     </AuthShell>
   );
