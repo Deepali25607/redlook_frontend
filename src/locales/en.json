@@ -165,9 +165,19 @@
     "qtyAdded": "{{qty}} × {{name}} added",
     "backToShop": "Back to shop",
     "productNotFound": "Product not found.",
+    "prevPhoto": "Previous photo",
+    "nextPhoto": "Next photo",
     "youMightAlsoLike": "You might also like",
     "addedToWishlist": "{{name}} added to wishlist",
     "removedFromWishlist": "{{name}} removed from wishlist"
+  },
+  "share": {
+    "label": "Share",
+    "message": "Check out {{name}} on Redlook",
+    "email": "Email",
+    "copyLink": "Copy link",
+    "copied": "Link copied to clipboard",
+    "copyFailed": "Couldn't copy the link"
   },
   "reviews": {
     "title": "Customer reviews",

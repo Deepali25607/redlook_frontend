@@ -14,7 +14,7 @@
 
 const ROUTES = [
   ['home',                '/',                              [],            []],
-  ['products',            '/products',                      [],            ['category']],
+  ['products',            '/products',                      [],            ['category', 'q']],
   ['product',             '/products/:id',                  ['id'],        []],
   ['cart',                '/cart',                          [],            []],
   ['login',               '/login',                         [],            []],

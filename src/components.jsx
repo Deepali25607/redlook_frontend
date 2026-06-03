@@ -2,11 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import {
   ShoppingCart, Search, Leaf, Plus, Star, Heart, User, Menu, X,
   Package, MapPin, LogOut, ChevronDown, Headphones, Phone, Mail, MessageCircle,
-  Globe, Sparkles,
+  Globe, Sparkles, Share2, Send, Link as LinkIcon, Check,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useCart, useAuth, useWishlist, useToast, useSettings } from './contexts';
 import { resolveImageUrl } from './api';
+import { routeToPath } from './router';
 import { SUPPORTED_LANGUAGES } from './i18n';
 import { formatCurrency } from './lib/format';
 
@@ -94,9 +95,16 @@ export function Navbar({ currentPage, onNavigate }) {
   const settings = useSettings();
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  // Global search: a slide-down bar beneath the navbar, reachable from every
+  // page. Submitting routes to the shop pre-filtered via ?q=.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const accountRef = useRef(null);
   const mobileMenuRef = useRef(null);
   const mobileMenuToggleRef = useRef(null);
+  const searchRef = useRef(null);
+  const searchToggleRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     const onClick = (e) => {
@@ -110,10 +118,29 @@ export function Navbar({ currentPage, onNavigate }) {
       ) {
         setMenuOpen(false);
       }
+      // Same two-ref guard for the search bar so clicking the search icon to
+      // close it isn't double-counted as an outside click.
+      if (
+        searchOpen &&
+        !searchRef.current?.contains(e.target) &&
+        !searchToggleRef.current?.contains(e.target)
+      ) {
+        setSearchOpen(false);
+      }
     };
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
-  }, [menuOpen]);
+  }, [menuOpen, searchOpen]);
+
+  // Focus the field as soon as the bar opens so the user can type immediately.
+  useEffect(() => { if (searchOpen) searchInputRef.current?.focus(); }, [searchOpen]);
+
+  const submitSearch = (e) => {
+    e.preventDefault();
+    const q = searchTerm.trim();
+    setSearchOpen(false);
+    onNavigate('products', q ? { q } : null);
+  };
 
   const navLinks = [
     { id: 'home', label: t('nav.home') },
@@ -158,8 +185,9 @@ export function Navbar({ currentPage, onNavigate }) {
         </nav>
 
         <div className="flex items-center gap-1">
-          <button onClick={() => onNavigate('products')} className="luxury-icon-btn p-2" aria-label={t('common.search')}>
-            <Search className="w-5 h-5" />
+          <button ref={searchToggleRef} onClick={() => setSearchOpen(o => !o)}
+            className="luxury-icon-btn p-2" aria-label={t('common.search')} aria-expanded={searchOpen}>
+            {searchOpen ? <X className="w-5 h-5" /> : <Search className="w-5 h-5" />}
           </button>
           <LanguageSwitcher />
           {isAuthenticated && (
@@ -231,6 +259,27 @@ export function Navbar({ currentPage, onNavigate }) {
           </button>
         </div>
       </div>
+
+      {searchOpen && (
+        <div ref={searchRef} className="border-t border-stone-200/70 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
+          <form onSubmit={submitSearch} className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                ref={searchInputRef}
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Escape') setSearchOpen(false); }}
+                placeholder={t('products.searchPlaceholder')}
+                aria-label={t('common.search')}
+                className="w-full pl-10 pr-4 py-2.5 border border-stone-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" />
+            </div>
+            <button type="submit" className="luxury-cta px-5 py-2.5 text-sm font-semibold rounded-xl tracking-wide shrink-0">
+              {t('common.search')}
+            </button>
+          </form>
+        </div>
+      )}
 
       {menuOpen && (
         <div ref={mobileMenuRef} className="luxury-mobile-menu md:hidden">
@@ -432,6 +481,98 @@ export function SupportWidget() {
         {open ? <X className="w-6 h-6" /> : <Headphones className="w-6 h-6" />}
       </button>
     </>
+  );
+}
+
+// ============================================================
+// SHARE MENU — share a product link to WhatsApp / social / email.
+// On devices that support the native Web Share API (mostly mobile) the
+// trigger opens the OS share sheet directly. Elsewhere it falls back to a
+// dropdown of explicit targets plus a copy-link action. The shared URL is an
+// absolute link to the product detail page so it opens correctly from any app.
+// ============================================================
+export function ShareMenu({ product, className = '' }) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  // routeToPath gives the in-app path ("/products/:id"); prefix the current
+  // origin so the link resolves when opened outside the app (WhatsApp, mail…).
+  const path = routeToPath('product', { id: product.id });
+  const url = typeof window !== 'undefined' ? window.location.origin + path : path;
+  const title = product.name;
+  const text = t('share.message', { name: product.name });
+
+  const eUrl = encodeURIComponent(url);
+  const eText = encodeURIComponent(text);
+  const eTitle = encodeURIComponent(title);
+
+  // Web-intent links — each opens that platform's share dialog in a new tab.
+  // WhatsApp's wa.me carries the message + link together as one text blob.
+  const targets = [
+    { key: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, color: '#25D366',
+      href: `https://wa.me/?text=${encodeURIComponent(text + ' ' + url)}` },
+    { key: 'facebook', label: 'Facebook', icon: Globe, color: '#1877F2',
+      href: `https://www.facebook.com/sharer/sharer.php?u=${eUrl}` },
+    { key: 'x', label: 'X', icon: X, color: '#0f1419',
+      href: `https://twitter.com/intent/tweet?url=${eUrl}&text=${eText}` },
+    { key: 'telegram', label: 'Telegram', icon: Send, color: '#229ED9',
+      href: `https://t.me/share/url?url=${eUrl}&text=${eText}` },
+    { key: 'email', label: t('share.email'), icon: Mail, color: '#6b7280',
+      href: `mailto:?subject=${eTitle}&body=${encodeURIComponent(text + '\n\n' + url)}` },
+  ];
+
+  const onTrigger = async () => {
+    // Native share sheet first: one tap → OS picker of every installed app.
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try { await navigator.share({ title, text, url }); return; }
+      catch { return; /* user dismissed the sheet — leave the menu closed */ }
+    }
+    setOpen((o) => !o);
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      toast.push(t('share.copied'));
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.push(t('share.copyFailed'), 'error');
+    }
+  };
+
+  return (
+    <div ref={ref} className={`relative inline-block ${className}`}>
+      <button type="button" onClick={onTrigger} aria-label={t('share.label')} aria-haspopup="menu" aria-expanded={open}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl border border-stone-200 text-stone-600 hover:text-emerald-700 hover:border-emerald-300 transition text-sm font-medium">
+        <Share2 className="w-4 h-4" /> {t('share.label')}
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-2 w-52 bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-700 rounded-xl shadow-xl py-1 text-sm z-50">
+          {targets.map((s) => (
+            <a key={s.key} href={s.href} target="_blank" rel="noopener noreferrer" role="menuitem"
+              onClick={() => setOpen(false)}
+              className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-stone-50 dark:hover:bg-slate-700 text-stone-700 dark:text-stone-200">
+              <s.icon className="w-4 h-4" style={{ color: s.color }} /> {s.label}
+            </a>
+          ))}
+          <button type="button" onClick={copyLink} role="menuitem"
+            className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-stone-50 dark:hover:bg-slate-700 text-stone-700 dark:text-stone-200 border-t border-stone-100 dark:border-slate-700">
+            {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <LinkIcon className="w-4 h-4 text-stone-500" />}
+            {copied ? t('share.copied') : t('share.copyLink')}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

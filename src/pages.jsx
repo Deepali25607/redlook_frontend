@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ShoppingCart, Search, Plus, Minus, Trash2, ArrowLeft, Star, Truck, Shield, Clock,
-  ChevronRight, Heart, MapPin, Package, Edit2, Check, AlertCircle, Eye, EyeOff,
+  ChevronLeft, ChevronRight, Heart, MapPin, Package, Edit2, Check, AlertCircle, Eye, EyeOff,
   CreditCard, Wallet, Smartphone, Banknote, CheckCircle2, Circle, X, User, RotateCcw, Download,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api, resolveImageUrl } from './api';
-import { ProductCard, ProductImage, Field, TextInput, SelectInput } from './components';
+import { ProductCard, ProductImage, Field, TextInput, SelectInput, ShareMenu } from './components';
 import { useCart, useAuth, useWishlist, useToast, useSettings, canCancelOrderClient, cartLineKey } from './contexts';
 import { formatCurrency, formatDateTime } from './lib/format';
 import { LuxuryBackground } from './LuxuryBackground';
@@ -718,7 +718,9 @@ export function ProductListPage({ onNavigate, params }) {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeCategory, setActiveCategory] = useState(params?.category || 'all');
-  const [search, setSearch] = useState('');
+  // Seed the search box from the URL's ?q= so the global navbar search (and
+  // shared/bookmarked search URLs) land here pre-filtered.
+  const [search, setSearch] = useState(params?.q || '');
   const [sortBy, setSortBy] = useState('popular');
   const [organicOnly, setOrganicOnly] = useState(false);
   // null = "no upper limit set yet", which we treat as priceCap (the
@@ -736,6 +738,12 @@ export function ProductListPage({ onNavigate, params }) {
       setLoading(false);
     });
   }, []);
+
+  // Re-running a navbar search while already on this page only changes the URL
+  // param (the component stays mounted, so the useState seed above won't fire
+  // again). Mirror ?q= / ?category= into local state when they change.
+  useEffect(() => { setSearch(params?.q || ''); }, [params?.q]);
+  useEffect(() => { if (params?.category) setActiveCategory(params.category); }, [params?.category]);
 
   let filtered = products;
   if (activeCategory !== 'all') filtered = filtered.filter(p => p.category === activeCategory);
@@ -880,6 +888,9 @@ export function ProductDetailsPage({ params, onNavigate }) {
   // set, the gallery swaps to that variant's photos and the stock /
   // add-to-cart use the variant's inventory.
   const [selectedVariantId, setSelectedVariantId] = useState(null);
+  // X coordinate where the current touch-drag on the gallery began, so
+  // touchEnd can measure swipe direction/distance. Null when no drag is active.
+  const touchStartX = useRef(null);
 
   // Compute the next available slot at render time. Cheap (5-entry array
   // scan) and the customer's clock advancing across a cutoff while sitting
@@ -942,12 +953,59 @@ export function ProductDetailsPage({ params, onNavigate }) {
             : ((product.images && product.images.length > 0) ? product.images : (product.image ? [product.image] : []));
           const safeIndex = Math.min(activeImageIndex, Math.max(0, gallery.length - 1));
           const activeImage = gallery[safeIndex] || (selectedVariant?.images?.[0]) || product.image;
+          const multi = gallery.length > 1;
+          // Step the active photo by +1/-1, wrapping around the ends so the
+          // arrows/swipe loop the gallery instead of dead-ending.
+          const go = (dir) => {
+            if (!multi) return;
+            setActiveImageIndex((prev) => {
+              const cur = Math.min(prev, gallery.length - 1);
+              return (cur + dir + gallery.length) % gallery.length;
+            });
+          };
+          // Horizontal swipe on the image: record where the finger lands, then
+          // on lift compare X — a move past the threshold pages left/right.
+          const onTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+          const onTouchEnd = (e) => {
+            if (touchStartX.current == null) return;
+            const dx = e.changedTouches[0].clientX - touchStartX.current;
+            touchStartX.current = null;
+            if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
+          };
           return (
             <div>
-              <div className="relative bg-gradient-to-br from-stone-50 to-emerald-50 rounded-3xl aspect-[3/4] flex items-center justify-center text-[200px] shadow-inner overflow-hidden">
+              <div
+                className="relative bg-gradient-to-br from-stone-50 to-emerald-50 rounded-3xl aspect-[3/4] flex items-center justify-center text-[200px] shadow-inner overflow-hidden touch-pan-y select-none"
+                onTouchStart={multi ? onTouchStart : undefined}
+                onTouchEnd={multi ? onTouchEnd : undefined}>
                 <ProductImage src={activeImage} alt={product.name} className="absolute inset-0 w-full h-full object-cover rounded-3xl" />
                 {product.isOrganic && (
                   <span className="absolute top-4 left-4 bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">{t('products.organic')}</span>
+                )}
+                {multi && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => go(-1)}
+                      aria-label={t('products.prevPhoto')}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/80 backdrop-blur text-stone-700 shadow-md flex items-center justify-center hover:bg-white transition">
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => go(1)}
+                      aria-label={t('products.nextPhoto')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/80 backdrop-blur text-stone-700 shadow-md flex items-center justify-center hover:bg-white transition">
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                      {gallery.map((_, i) => (
+                        <span
+                          key={i}
+                          className={`h-1.5 rounded-full transition-all ${i === safeIndex ? 'w-5 bg-emerald-600' : 'w-1.5 bg-white/80'}`} />
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
               {gallery.length > 1 && (
@@ -974,10 +1032,13 @@ export function ProductDetailsPage({ params, onNavigate }) {
         })()}
 
         <div>
-          <div className="flex items-center gap-2 text-sm text-amber-600 mb-2">
-            <Star className="w-4 h-4 fill-current" />
-            <span className="font-medium">{product.rating}</span>
-            <span className="text-stone-400">· {t('products.reviewsCount', { count: product.reviews })}</span>
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="flex items-center gap-2 text-sm text-amber-600">
+              <Star className="w-4 h-4 fill-current" />
+              <span className="font-medium">{product.rating}</span>
+              <span className="text-stone-400">· {t('products.reviewsCount', { count: product.reviews })}</span>
+            </div>
+            <ShareMenu product={product} />
           </div>
           <h1 className="text-4xl font-bold text-stone-900 mb-2">{product.name}</h1>
           {product.freshness && (

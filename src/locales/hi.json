@@ -165,9 +165,19 @@
     "qtyAdded": "{{qty}} × {{name}} जोड़ा गया",
     "backToShop": "दुकान पर वापस जाएं",
     "productNotFound": "उत्पाद नहीं मिला।",
+    "prevPhoto": "पिछली तस्वीर",
+    "nextPhoto": "अगली तस्वीर",
     "youMightAlsoLike": "आपको ये भी पसंद आ सकते हैं",
     "addedToWishlist": "{{name}} विशलिस्ट में जोड़ा गया",
     "removedFromWishlist": "{{name}} विशलिस्ट से हटाया गया"
+  },
+  "share": {
+    "label": "शेयर करें",
+    "message": "Redlook पर {{name}} देखें",
+    "email": "ईमेल",
+    "copyLink": "लिंक कॉपी करें",
+    "copied": "लिंक क्लिपबोर्ड पर कॉपी हो गया",
+    "copyFailed": "लिंक कॉपी नहीं हो सका"
   },
   "reviews": {
     "title": "ग्राहक समीक्षाएँ",
