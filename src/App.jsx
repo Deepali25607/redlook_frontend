@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AuthProvider, CartProvider, WishlistProvider, ToastProvider, SettingsProvider, ThemeProvider } from './contexts';
-import { Navbar, Footer, SupportWidget, AppDownloadBanner } from './components';
+import { Navbar, Footer, SupportWidget, AppDownloadBanner, PullToRefresh } from './components';
 import {
   HomePage, ProductListPage, ProductDetailsPage, CartPage,
   LoginPage, RegisterPage, OtpVerifyPage, ForgotPasswordPage, ResetOtpPage, ResetPasswordPage,
@@ -123,6 +123,7 @@ export default function App() {
                     pages with different heights makes the footer briefly
                     slide up/down for a frame, which reads as a "shake". */}
                 <div className="font-sans flex flex-col text-stone-900 dark:text-slate-100">
+                  <PullToRefresh />
                   <Navbar currentPage={route.name} onNavigate={navigate} />
                   <main className="flex-1 min-h-screen">
                     <PageComponent params={route.params} onNavigate={navigate} />

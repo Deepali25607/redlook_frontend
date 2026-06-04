@@ -414,6 +414,7 @@
     "privacy": "Privacy policy",
     "rights": "© {{year}} {{name}}. All rights reserved.",
     "getApp": "Get the {{name}} app",
+    "scanToInstall": "Scan the QR code to install on your phone",
     "orDownloadDirect": "Download for Android"
   },
   "appBanner": {

@@ -414,6 +414,7 @@
     "privacy": "गोपनीयता नीति",
     "rights": "© {{year}} {{name}}। सर्वाधिकार सुरक्षित।",
     "getApp": "{{name}} ऐप पाएं",
+    "scanToInstall": "फ़ोन पर इंस्टॉल करने के लिए QR कोड स्कैन करें",
     "orDownloadDirect": "Android के लिए डाउनलोड करें"
   },
   "appBanner": {

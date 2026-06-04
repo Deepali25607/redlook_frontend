@@ -4,6 +4,7 @@ import {
   Package, MapPin, LogOut, ChevronDown, Headphones, Phone, Mail, MessageCircle,
   Globe, Sparkles, Share2, Send, Link as LinkIcon, Check, Download,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { useTranslation } from 'react-i18next';
 import { useCart, useAuth, useWishlist, useToast, useSettings } from './contexts';
 import { resolveImageUrl } from './api';
@@ -374,16 +375,23 @@ export function Footer({ onNavigate }) {
           </ul>
         </div>
       </div>
-      {/* Direct Android APK download. The file ships in this site's own
-          public/ folder, so it deploys to the storefront root and is served
-          same-origin and fully public. Hidden inside the installed app, where
-          window.Capacitor is injected. */}
+      {/* Direct Android APK download + scannable QR. The APK ships in this
+          site's own public/ folder, so it deploys to the storefront root and
+          is served same-origin and fully public. The QR encodes the absolute
+          download URL computed from the current origin, so it always points at
+          whatever domain the site is deployed on (no hardcoded host). Hidden
+          inside the installed app, where window.Capacitor is injected. */}
       {!window.Capacitor && (
-        <div className="border-t border-stone-800 flex items-center justify-center gap-3 py-6 px-4 text-center">
+        <div className="border-t border-stone-800 flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 py-6 px-4 text-center sm:text-left">
+          {/* QR: scan with a phone camera to open the APK download. */}
+          <div className="bg-white p-2 rounded-xl shrink-0">
+            <QRCodeSVG value={appDownloadUrl()} size={96} level="M" />
+          </div>
           <div>
             <div className="text-white font-semibold text-sm">
               {t('footer.getApp', { name: settings?.company_name || 'Redlook' })}
             </div>
+            <div className="text-xs text-stone-400 mt-0.5">{t('footer.scanToInstall')}</div>
             <a href={APP_APK_URL} download
               className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-emerald-400 hover:text-emerald-300">
               <Download className="w-3.5 h-3.5" /> {t('footer.orDownloadDirect')}
@@ -412,6 +420,92 @@ export function Footer({ onNavigate }) {
 // public/Redlook.apk, and redeploy.
 const APP_APK_URL = '/Redlook.apk';
 const APP_BANNER_DISMISS_KEY = 'redlook_app_banner_dismissed';
+
+// Absolute URL to the APK, derived from the current origin so the footer QR
+// resolves to the real deployed domain (e.g. https://<site>/Redlook.apk)
+// without hardcoding it. Falls back to the relative path during SSR/build.
+function appDownloadUrl() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin + APP_APK_URL;
+  }
+  return APP_APK_URL;
+}
+
+// ============================================================
+// PULL TO REFRESH — swipe down at the top of the page to reload.
+// The Android WebView has no native pull-to-refresh, so we synthesise one from
+// touch events: a tug starting at scrollTop 0 drags a spinner down, and a
+// release past the threshold reloads the page. Gated to the installed app
+// (window.Capacitor) — mobile browsers already provide their own gesture, so
+// enabling it on web would double up. Listeners are passive (no preventDefault)
+// so normal scrolling is untouched.
+// ============================================================
+const PTR_THRESHOLD = 70;   // px of (dampened) pull needed to trigger a refresh
+const PTR_MAX = 110;        // clamp so the indicator can't be dragged forever
+
+export function PullToRefresh() {
+  const [pull, setPull] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const startY = useRef(null);
+  const pullRef = useRef(0);
+
+  useEffect(() => {
+    if (!window.Capacitor?.isNativePlatform?.()) return;
+
+    const set = (v) => { pullRef.current = v; setPull(v); };
+    const onStart = (e) => {
+      // Only arm the gesture when already scrolled to the very top.
+      if (window.scrollY <= 0) { startY.current = e.touches[0].clientY; setDragging(true); }
+      else startY.current = null;
+    };
+    const onMove = (e) => {
+      if (startY.current == null) return;
+      const dy = e.touches[0].clientY - startY.current;
+      // Once the user scrolls back up / past the top, disarm.
+      if (dy <= 0 || window.scrollY > 0) { set(0); return; }
+      set(Math.min(dy * 0.5, PTR_MAX)); // resistance: drag feels weighted
+    };
+    const onEnd = () => {
+      if (startY.current == null) return;
+      startY.current = null;
+      setDragging(false);
+      if (pullRef.current > PTR_THRESHOLD) {
+        setRefreshing(true);
+        window.location.reload();
+      } else {
+        set(0);
+      }
+    };
+
+    window.addEventListener('touchstart', onStart, { passive: true });
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onEnd, { passive: true });
+    window.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onEnd);
+    };
+  }, []);
+
+  if (pull <= 0 && !refreshing) return null;
+  const ready = pull > PTR_THRESHOLD || refreshing;
+  const y = refreshing ? 28 : pull - 36; // keep the puck tucked until pulled
+
+  return (
+    <div aria-hidden className="fixed top-0 inset-x-0 z-[60] flex justify-center pointer-events-none"
+      style={{ transform: `translateY(${y}px)`, transition: dragging ? 'none' : 'transform .2s ease' }}>
+      <div className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 shadow-lg flex items-center justify-center">
+        <span
+          className={`block w-5 h-5 rounded-full border-2 border-rose-500 border-t-transparent ${refreshing ? 'animate-spin' : ''}`}
+          style={refreshing ? undefined : { transform: `rotate(${pull * 3}deg)`, opacity: ready ? 1 : 0.5 }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export function AppDownloadBanner() {
   const { t } = useTranslation();
