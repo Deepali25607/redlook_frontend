@@ -412,7 +412,14 @@
     "legal": "कानूनी",
     "terms": "सेवा की शर्तें",
     "privacy": "गोपनीयता नीति",
-    "rights": "© {{year}} {{name}}। सर्वाधिकार सुरक्षित।"
+    "rights": "© {{year}} {{name}}। सर्वाधिकार सुरक्षित।",
+    "getApp": "{{name}} ऐप पाएं",
+    "orDownloadDirect": "Android के लिए डाउनलोड करें"
+  },
+  "appBanner": {
+    "title": "{{name}} ऐप पाएं",
+    "subtitle": "तेज़ खरीदारी, सीधे आपके फ़ोन पर।",
+    "download": "डाउनलोड करें"
   },
   "errors": {
     "generic": "कुछ ग़लत हो गया",

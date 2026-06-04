@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AuthProvider, CartProvider, WishlistProvider, ToastProvider, SettingsProvider, ThemeProvider } from './contexts';
-import { Navbar, Footer, SupportWidget } from './components';
+import { Navbar, Footer, SupportWidget, AppDownloadBanner } from './components';
 import {
   HomePage, ProductListPage, ProductDetailsPage, CartPage,
   LoginPage, RegisterPage, OtpVerifyPage, ForgotPasswordPage, ResetOtpPage, ResetPasswordPage,
@@ -56,6 +56,26 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  // Android hardware back button. With no listener registered, Capacitor's
+  // default is to close the app on the very first back press. Instead we walk
+  // the in-app history (driven by the pushState/popstate routing above) and
+  // only exit the app when the user is already on the home screen. Guarded to
+  // native so the web build is unaffected (browsers handle back natively).
+  useEffect(() => {
+    if (!window.Capacitor?.isNativePlatform?.()) return;
+    let handle;
+    import('@capacitor/app').then(({ App: CapacitorApp }) => {
+      handle = CapacitorApp.addListener('backButton', () => {
+        if (window.location.pathname !== '/') {
+          window.history.back();
+        } else {
+          CapacitorApp.exitApp();
+        }
+      });
+    });
+    return () => { handle?.then?.((h) => h.remove()); };
+  }, []);
+
   const navigate = (name, params = null) => {
     const path = routeToPath(name, params);
     const current = window.location.pathname + window.location.search;
@@ -109,6 +129,7 @@ export default function App() {
                   </main>
                   <Footer onNavigate={navigate} />
                   <SupportWidget />
+                  <AppDownloadBanner />
                 </div>
               </WishlistProvider>
             </CartProvider>

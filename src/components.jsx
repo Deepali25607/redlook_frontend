@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import {
   ShoppingCart, Search, Leaf, Plus, Star, Heart, User, Menu, X,
   Package, MapPin, LogOut, ChevronDown, Headphones, Phone, Mail, MessageCircle,
-  Globe, Sparkles, Share2, Send, Link as LinkIcon, Check,
+  Globe, Sparkles, Share2, Send, Link as LinkIcon, Check, Download,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useCart, useAuth, useWishlist, useToast, useSettings } from './contexts';
@@ -374,10 +374,96 @@ export function Footer({ onNavigate }) {
           </ul>
         </div>
       </div>
+      {/* Direct Android APK download. The file ships in this site's own
+          public/ folder, so it deploys to the storefront root and is served
+          same-origin and fully public. Hidden inside the installed app, where
+          window.Capacitor is injected. */}
+      {!window.Capacitor && (
+        <div className="border-t border-stone-800 flex items-center justify-center gap-3 py-6 px-4 text-center">
+          <div>
+            <div className="text-white font-semibold text-sm">
+              {t('footer.getApp', { name: settings?.company_name || 'Redlook' })}
+            </div>
+            <a href={APP_APK_URL} download
+              className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-emerald-400 hover:text-emerald-300">
+              <Download className="w-3.5 h-3.5" /> {t('footer.orDownloadDirect')}
+            </a>
+          </div>
+        </div>
+      )}
       <div className="border-t border-stone-800 py-4 text-center text-xs text-stone-500">
         {t('footer.rights', { year: new Date().getFullYear(), name: settings?.company_name || 'Redlook' })}
       </div>
     </footer>
+  );
+}
+
+// ============================================================
+// On an Android phone visiting the website, offer a one-tap download of the
+// Redlook APK. Deliberately NOT shown:
+//   - inside the installed native app (window.Capacitor is injected there),
+//   - on non-Android devices (the asset is an Android-only .apk),
+//   - after the user dismisses it (persisted in localStorage, redlook_ ns).
+// Floats just above the support FAB so the two don't collide.
+//
+// The APK ships in the site's own public/ folder, so it deploys to the
+// storefront's root and is served same-origin and fully public — no GitHub
+// auth, no third-party host. To publish a new build: rebuild the APK, replace
+// public/Redlook.apk, and redeploy.
+const APP_APK_URL = '/Redlook.apk';
+const APP_BANNER_DISMISS_KEY = 'redlook_app_banner_dismissed';
+
+export function AppDownloadBanner() {
+  const { t } = useTranslation();
+  const settings = useSettings();
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // Inside the installed app → never prompt to install the app.
+    if (window.Capacitor) return;
+    // Android only — the download is an Android APK.
+    if (!/Android/i.test(navigator.userAgent || '')) return;
+    // Respect a prior dismissal.
+    try { if (localStorage.getItem(APP_BANNER_DISMISS_KEY) === '1') return; } catch { /* storage blocked */ }
+    // Small delay so it slides in after the page settles rather than on first paint.
+    const id = setTimeout(() => setShow(true), 1200);
+    return () => clearTimeout(id);
+  }, []);
+
+  if (!show) return null;
+
+  const dismiss = () => {
+    try { localStorage.setItem(APP_BANNER_DISMISS_KEY, '1'); } catch { /* storage blocked */ }
+    setShow(false);
+  };
+
+  const appName = settings?.company_name || 'Redlook';
+
+  return (
+    <div className="fixed bottom-24 inset-x-3 z-50 mx-auto max-w-md animate-[slideIn_.25s_ease-out]">
+      <div className="bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-700 rounded-2xl shadow-2xl p-3 flex items-center gap-3">
+        <div className="w-11 h-11 shrink-0 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-2xl">
+          🛍️
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-stone-900 dark:text-slate-100 truncate">
+            {t('appBanner.title', { name: appName })}
+          </div>
+          <div className="text-xs text-stone-600 dark:text-slate-400 truncate">
+            {t('appBanner.subtitle')}
+          </div>
+        </div>
+        <a href={APP_APK_URL} download onClick={dismiss}
+          className="shrink-0 inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-3.5 py-2 rounded-xl transition">
+          <Download className="w-4 h-4" /> {t('appBanner.download')}
+        </a>
+        <button onClick={dismiss} aria-label={t('common.close')}
+          className="shrink-0 p-1 text-stone-400 hover:text-stone-700 dark:hover:text-slate-200">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
   );
 }
 

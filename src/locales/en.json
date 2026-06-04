@@ -412,7 +412,14 @@
     "legal": "Legal",
     "terms": "Terms of service",
     "privacy": "Privacy policy",
-    "rights": "© {{year}} {{name}}. All rights reserved."
+    "rights": "© {{year}} {{name}}. All rights reserved.",
+    "getApp": "Get the {{name}} app",
+    "orDownloadDirect": "Download for Android"
+  },
+  "appBanner": {
+    "title": "Get the {{name}} app",
+    "subtitle": "Faster shopping, right on your phone.",
+    "download": "Download"
   },
   "errors": {
     "generic": "Something went wrong",

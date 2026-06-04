@@ -1,0 +1,10 @@
+{
+  "appId": "com.redlook.app",
+  "appName": "Redlook",
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
