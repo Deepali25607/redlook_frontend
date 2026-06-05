@@ -441,57 +441,73 @@ export function HomePage({ onNavigate }) {
           }
           const [anchor, ...rest] = categories;
           const anchorStyle = COLLECTION_TILE_STYLES[anchor.id] || DEFAULT_TILE_STYLE;
-          return (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Anchor — large square on the left */}
+          // Small editorial tile. Reused by the 2×2 cluster beside the anchor
+          // and by the overflow grid below, so EVERY category renders as a tile
+          // (the layout no longer caps at the first five categories).
+          const smallTile = (c, idx) => {
+            const s = COLLECTION_TILE_STYLES[c.id] || DEFAULT_TILE_STYLE;
+            return (
               <button
-                onClick={() => onNavigate('products', { category: anchor.id })}
-                className="editorial-tile reveal-up text-left h-[28rem] md:h-[34rem]"
-                style={{ background: anchorStyle.gradient }}>
-                <div className="absolute inset-0 flex items-end p-8">
+                key={c.id}
+                onClick={() => onNavigate('products', { category: c.id })}
+                className="editorial-tile reveal-up text-left h-[13.5rem] md:h-[16.4rem]"
+                style={{ background: s.gradient, transitionDelay: `${(idx + 1) * 80}ms` }}>
+                <div className="absolute inset-0 flex items-end p-5">
                   <div className="relative z-10">
-                    <p className="text-[11px] uppercase tracking-[0.28em] font-semibold mb-3" style={{ color: anchorStyle.accent }}>
-                      {anchorStyle.kicker}
+                    <p className="text-[10px] uppercase tracking-[0.24em] font-semibold mb-2" style={{ color: s.accent }}>
+                      {s.kicker}
                     </p>
-                    <div className="font-luxury text-4xl sm:text-5xl font-semibold text-amber-50 mb-2">{anchor.name}</div>
-                    <p className="text-sm text-amber-50/75 max-w-xs">{anchorStyle.subtitle}</p>
-                    <div className="editorial-tile-arrow mt-5 inline-flex items-center gap-2 text-amber-200 font-semibold text-sm">
-                      Explore the edit <ChevronRight className="w-4 h-4" />
-                    </div>
+                    <div className="font-luxury text-xl sm:text-2xl font-semibold text-amber-50">{c.name}</div>
+                    <p className="text-xs text-amber-50/70 mt-1 hidden sm:block">{s.subtitle}</p>
                   </div>
                 </div>
-                <div className="editorial-tile-art absolute top-1/2 right-6 -translate-y-1/2 text-[10rem] sm:text-[12rem] opacity-90" style={{ filter: 'drop-shadow(0 12px 28px rgba(0,0,0,0.4))' }} aria-hidden="true">
-                  {anchor.icon}
+                <div className="editorial-tile-art absolute top-1/2 right-4 -translate-y-1/2 text-[5rem] opacity-90" aria-hidden="true">
+                  {c.icon}
                 </div>
               </button>
+            );
+          };
+          // Categories past the anchor + 2×2 cluster (i.e. the 6th onward).
+          const overflow = rest.slice(4);
+          return (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Anchor — large square on the left */}
+                <button
+                  onClick={() => onNavigate('products', { category: anchor.id })}
+                  className="editorial-tile reveal-up text-left h-[28rem] md:h-[34rem]"
+                  style={{ background: anchorStyle.gradient }}>
+                  <div className="absolute inset-0 flex items-end p-8">
+                    <div className="relative z-10">
+                      <p className="text-[11px] uppercase tracking-[0.28em] font-semibold mb-3" style={{ color: anchorStyle.accent }}>
+                        {anchorStyle.kicker}
+                      </p>
+                      <div className="font-luxury text-4xl sm:text-5xl font-semibold text-amber-50 mb-2">{anchor.name}</div>
+                      <p className="text-sm text-amber-50/75 max-w-xs">{anchorStyle.subtitle}</p>
+                      <div className="editorial-tile-arrow mt-5 inline-flex items-center gap-2 text-amber-200 font-semibold text-sm">
+                        Explore the edit <ChevronRight className="w-4 h-4" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="editorial-tile-art absolute top-1/2 right-6 -translate-y-1/2 text-[10rem] sm:text-[12rem] opacity-90" style={{ filter: 'drop-shadow(0 12px 28px rgba(0,0,0,0.4))' }} aria-hidden="true">
+                    {anchor.icon}
+                  </div>
+                </button>
 
-              {/* 4 smaller tiles stacked on the right in a 2x2 grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {rest.slice(0, 4).map((c, idx) => {
-                  const s = COLLECTION_TILE_STYLES[c.id] || DEFAULT_TILE_STYLE;
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => onNavigate('products', { category: c.id })}
-                      className="editorial-tile reveal-up text-left h-[13.5rem] md:h-[16.4rem]"
-                      style={{ background: s.gradient, transitionDelay: `${(idx + 1) * 80}ms` }}>
-                      <div className="absolute inset-0 flex items-end p-5">
-                        <div className="relative z-10">
-                          <p className="text-[10px] uppercase tracking-[0.24em] font-semibold mb-2" style={{ color: s.accent }}>
-                            {s.kicker}
-                          </p>
-                          <div className="font-luxury text-xl sm:text-2xl font-semibold text-amber-50">{c.name}</div>
-                          <p className="text-xs text-amber-50/70 mt-1 hidden sm:block">{s.subtitle}</p>
-                        </div>
-                      </div>
-                      <div className="editorial-tile-art absolute top-1/2 right-4 -translate-y-1/2 text-[5rem] opacity-90" aria-hidden="true">
-                        {c.icon}
-                      </div>
-                    </button>
-                  );
-                })}
+                {/* Up to 4 smaller tiles stacked on the right in a 2×2 grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                  {rest.slice(0, 4).map(smallTile)}
+                </div>
               </div>
-            </div>
+
+              {/* Any remaining categories in a uniform tile grid below, so the
+                  home page always shows the full catalogue of collections. */}
+              {overflow.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 mt-5">
+                  {overflow.map(smallTile)}
+                </div>
+              )}
+            </>
           );
         })()}
       </section>
@@ -872,7 +888,7 @@ function buildProductBadges(settings, product, nextSlot) {
 // ============================================================
 export function ProductDetailsPage({ params, onNavigate }) {
   const { t } = useTranslation();
-  const { addItem } = useCart();
+  const { addItem, items: cartItems } = useCart();
   const toast = useToast();
   const settings = useSettings();
   const [product, setProduct] = useState(null);
@@ -1082,27 +1098,40 @@ export function ProductDetailsPage({ params, onNavigate }) {
                   <span className="text-sm font-semibold text-stone-700">Colour: <span className="text-stone-900">{selected.color}</span></span>
                   <span className="text-xs text-stone-500">{variants.length} option{variants.length === 1 ? '' : 's'}</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-start gap-2.5">
                   {variants.map((v) => {
                     const isSelected = v.variant_id === selected.variant_id;
                     const isOut = Number(v.stock) <= 0;
                     return (
-                      <button
-                        key={v.variant_id}
-                        type="button"
-                        disabled={isOut}
-                        onClick={() => { setSelectedVariantId(v.variant_id); setActiveImageIndex(0); }}
-                        title={v.color + (isOut ? ' (out of stock)' : '')}
-                        aria-label={`Select colour ${v.color}`}
-                        aria-pressed={isSelected}
-                        className={`relative w-11 h-11 rounded-full border-2 transition shrink-0 ${
-                          isSelected ? 'border-emerald-600 ring-2 ring-emerald-200 ring-offset-2' : 'border-white shadow ring-1 ring-stone-200 hover:ring-stone-400'
-                        } ${isOut ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                        style={{ background: v.color_hex }}>
+                      <div key={v.variant_id} className="flex flex-col items-center gap-1 w-11 shrink-0">
+                        <button
+                          type="button"
+                          disabled={isOut}
+                          onClick={() => { setSelectedVariantId(v.variant_id); setActiveImageIndex(0); setQty(1); }}
+                          title={v.color + (isOut ? ` (${t('products.soldOut')})` : '')}
+                          aria-label={isOut ? `${v.color} – ${t('products.soldOut')}` : `Select colour ${v.color}`}
+                          aria-pressed={isSelected}
+                          className={`relative w-11 h-11 rounded-full border-2 transition shrink-0 ${
+                            isSelected ? 'border-emerald-600 ring-2 ring-emerald-200 ring-offset-2' : 'border-white shadow ring-1 ring-stone-200 hover:ring-stone-400'
+                          } ${isOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                          style={{ background: v.color_hex }}>
+                          {isOut && (
+                            <>
+                              {/* Fade the colour and strike it through so the swatch
+                                  clearly reads as unavailable rather than just disabled. */}
+                              <span className="absolute inset-0 rounded-full bg-white/55" />
+                              <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+                                <span className="block w-[150%] h-0.5 bg-stone-500 rotate-45" />
+                              </span>
+                            </>
+                          )}
+                        </button>
                         {isOut && (
-                          <span className="absolute inset-0 flex items-center justify-center text-stone-700 font-bold text-lg">/</span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-red-600 leading-tight text-center">
+                            {t('products.soldOut')}
+                          </span>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1132,9 +1161,26 @@ export function ProductDetailsPage({ params, onNavigate }) {
               );
             }
 
+            // How many units of THIS exact line are already in the cart, and
+            // therefore how many more can still be added before stock runs out.
+            const lineKeyForSel = cartLineKey(selectedVariant
+              ? { id: product.id, variant_id: selectedVariant.variant_id }
+              : { id: product.id });
+            const inCart = cartItems.find((i) => cartLineKey(i) === lineKeyForSel)?.qty || 0;
+            const stockNum = Number(effectiveStock);
+            const hasStock = Number.isFinite(stockNum);
+            const remaining = hasStock ? Math.max(0, stockNum - inCart) : Infinity;
+            const atMax = hasStock && qty >= remaining;
+            const noneLeft = hasStock && remaining <= 0;
+
             const handleAdd = (navigateAfter = false) => {
-              addItem(product, qty, selectedVariant);
-              if (navigateAfter) onNavigate('cart');
+              if (noneLeft) {
+                toast.push(t('products.onlyNAvailable', { count: stockNum }), 'error');
+                return;
+              }
+              const res = addItem(product, qty, selectedVariant);
+              if (navigateAfter) { onNavigate('cart'); return; }
+              if (res?.capped) toast.push(t('products.onlyNAvailable', { count: res.stock }), 'error');
               else toast.push(t('products.qtyAdded', { qty, name: product.name }));
             };
 
@@ -1145,20 +1191,32 @@ export function ProductDetailsPage({ params, onNavigate }) {
                   <div className="inline-flex items-center bg-stone-100 rounded-xl">
                     <button onClick={() => setQty(Math.max(1, qty - 1))} className="p-3 hover:bg-stone-200 rounded-l-xl transition"><Minus className="w-4 h-4" /></button>
                     <span className="px-6 font-semibold">{qty}</span>
-                    <button onClick={() => setQty(qty + 1)} className="p-3 hover:bg-stone-200 rounded-r-xl transition"><Plus className="w-4 h-4" /></button>
+                    <button onClick={() => { if (!atMax) setQty(qty + 1); }}
+                      disabled={atMax}
+                      title={atMax ? t('products.onlyNAvailable', { count: stockNum }) : undefined}
+                      className="p-3 hover:bg-stone-200 rounded-r-xl transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"><Plus className="w-4 h-4" /></button>
                   </div>
                   {selectedVariant && (
                     <p className="text-xs text-stone-500 mt-1.5">{effectiveStock} in stock for {selectedVariant.color}</p>
                   )}
+                  {/* Stock-cap notice: either everything's already in the cart,
+                      or the stepper has reached the remaining stock. */}
+                  {hasStock && (noneLeft || atMax) && (
+                    <p className="text-xs text-amber-600 font-medium mt-1">
+                      {noneLeft
+                        ? t('products.allInCart', { count: stockNum })
+                        : t('products.onlyNAvailable', { count: stockNum })}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap gap-3 mb-8">
-                  <button onClick={() => handleAdd(false)}
-                    className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-4 rounded-xl font-semibold shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2">
+                  <button onClick={() => handleAdd(false)} disabled={noneLeft}
+                    className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-4 rounded-xl font-semibold shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-600">
                     <ShoppingCart className="w-4 h-4" /> {t('products.addToCartWithPrice', { price: formatINR(product.price * qty) })}
                   </button>
-                  <button onClick={() => handleAdd(true)}
-                    className="bg-stone-900 hover:bg-stone-800 text-white px-8 py-4 rounded-xl font-semibold transition">
+                  <button onClick={() => handleAdd(true)} disabled={noneLeft}
+                    className="bg-stone-900 hover:bg-stone-800 text-white px-8 py-4 rounded-xl font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-stone-900">
                     {t('products.buyNow')}
                   </button>
                 </div>
@@ -1577,15 +1635,33 @@ export function CartPage({ onNavigate }) {
                   {' '}{t('common.perUnit', { unit: item.unit })}
                 </p>
                 <div className="flex items-center gap-3 mt-2">
-                  <div className="inline-flex items-center bg-stone-100 rounded-lg">
-                    <button onClick={() => updateQty(cartLineKey(item), item.qty - 1)} className="p-2 hover:bg-stone-200 rounded-l-lg transition"><Minus className="w-3 h-3" /></button>
-                    <span className="px-3 text-sm font-semibold">{item.qty}</span>
-                    <button onClick={() => updateQty(cartLineKey(item), item.qty + 1)} className="p-2 hover:bg-stone-200 rounded-r-lg transition"><Plus className="w-3 h-3" /></button>
-                  </div>
+                  {(() => {
+                    // Cap the "+" at this line's stock (per-colour for variants).
+                    // When the cart already holds every available unit, the
+                    // button is disabled and a hint explains why.
+                    const max = Number(item.stock);
+                    const atMax = Number.isFinite(max) && item.qty >= max;
+                    return (
+                      <div className="inline-flex items-center bg-stone-100 rounded-lg">
+                        <button onClick={() => updateQty(cartLineKey(item), item.qty - 1)} className="p-2 hover:bg-stone-200 rounded-l-lg transition"><Minus className="w-3 h-3" /></button>
+                        <span className="px-3 text-sm font-semibold">{item.qty}</span>
+                        <button
+                          onClick={() => updateQty(cartLineKey(item), item.qty + 1)}
+                          disabled={atMax}
+                          title={atMax ? t('products.onlyNAvailable', { count: max }) : undefined}
+                          className="p-2 hover:bg-stone-200 rounded-r-lg transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"><Plus className="w-3 h-3" /></button>
+                      </div>
+                    );
+                  })()}
                   <button onClick={() => removeItem(cartLineKey(item))} className="text-red-600 hover:text-red-700 text-sm flex items-center gap-1">
                     <Trash2 className="w-3 h-3" /> {t('common.remove')}
                   </button>
                 </div>
+                {Number.isFinite(Number(item.stock)) && item.qty >= Number(item.stock) && (
+                  <p className="text-xs text-amber-600 font-medium mt-1.5">
+                    {t('products.onlyNAvailable', { count: Number(item.stock) })}
+                  </p>
+                )}
               </div>
               <div className="text-right">
                 {/* Line total mirrors the per-unit treatment: strikethrough

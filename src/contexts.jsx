@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { api } from './api';
 import i18n from './i18n';
 
@@ -126,6 +126,11 @@ export function CartProvider({ children }) {
   const auth = useAuth();
   const userId = auth?.user?.customer_id;
   const [items, setItems] = useState([]);
+  // Mirror of `items` that's always current, so addItem can read the existing
+  // line quantity synchronously (without a stale-closure or relying on the
+  // setItems updater for side effects) to enforce per-variant stock caps.
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
   // Load cart for current user/guest whenever identity changes
   useEffect(() => {
@@ -149,12 +154,26 @@ export function CartProvider({ children }) {
   // images}) so the cart line shows the colour name and the variant's
   // own primary photo. Two colours of the same product live as two
   // separate cart lines, matched on the composite lineKey.
+  // Returns { qty, stock, capped } describing the resulting line: `qty` is the
+  // line quantity after the add (clamped to the variant's stock), and `capped`
+  // is true when the requested amount couldn't be fully added because stock
+  // ran out. Callers use this to surface a "only N available" message.
   const addItem = (product, qty = 1, variant = null) => {
+    const targetKey = cartLineKey(variant ? { id: product.id, variant_id: variant.variant_id } : { id: product.id });
+    // Per-line stock for this exact colour (or the product itself, single-SKU).
+    const rawStock = variant ? variant.stock : product.stock;
+    const stock = Number(rawStock);
+    const hasStock = Number.isFinite(stock);
+    const existingQty = itemsRef.current.find(i => cartLineKey(i) === targetKey)?.qty || 0;
+    const desired = existingQty + qty;
+    const finalQty = hasStock ? Math.max(0, Math.min(desired, stock)) : desired;
+
     setItems(prev => {
-      const targetKey = cartLineKey(variant ? { id: product.id, variant_id: variant.variant_id } : { id: product.id });
       const existing = prev.find(i => cartLineKey(i) === targetKey);
       if (existing) {
-        return prev.map(i => cartLineKey(i) === targetKey ? { ...i, qty: i.qty + qty } : i);
+        return prev.map(i => cartLineKey(i) === targetKey
+          ? { ...i, qty: finalQty, ...(hasStock ? { stock } : {}) }
+          : i);
       }
       const line = {
         id: product.id,
@@ -168,8 +187,9 @@ export function CartProvider({ children }) {
         image: variant && Array.isArray(variant.images) && variant.images.length > 0
           ? variant.images[0]
           : product.image,
-        qty,
+        qty: finalQty,
       };
+      if (hasStock) line.stock = stock;
       if (variant) {
         line.variant_id = variant.variant_id;
         line.variant_color = variant.color;
@@ -177,6 +197,8 @@ export function CartProvider({ children }) {
       }
       return [...prev, line];
     });
+
+    return { qty: finalQty, stock: hasStock ? stock : null, capped: hasStock && desired > stock };
   };
   // updateQty/removeItem now key on the composite lineKey instead of
   // product_id alone. Callers should pass cartLineKey(item) — legacy
@@ -184,7 +206,13 @@ export function CartProvider({ children }) {
   // because lineKey(no-variant) === id.
   const updateQty = (lineKey, qty) => {
     if (qty <= 0) return removeItem(lineKey);
-    setItems(prev => prev.map(i => cartLineKey(i) === lineKey ? { ...i, qty } : i));
+    setItems(prev => prev.map(i => {
+      if (cartLineKey(i) !== lineKey) return i;
+      // Never let a line exceed its known stock (per-colour for variants).
+      const max = Number(i.stock);
+      const capped = Number.isFinite(max) ? Math.min(qty, max) : qty;
+      return { ...i, qty: capped };
+    }));
   };
   const removeItem = (lineKey) => setItems(prev => prev.filter(i => cartLineKey(i) !== lineKey));
   const clearCart = () => setItems([]);
@@ -207,10 +235,31 @@ export function CartProvider({ children }) {
       setItems((prev) => prev.map((item) => {
         const f = fresh[item.id];
         if (!f) return item;
+        // Resolve the live stock for this exact line: a variant line tracks
+        // its own colour's stock; a plain line tracks the product's stock.
+        let liveStock = item.stock;
+        if (item.variant_id && Array.isArray(f.variants)) {
+          const fv = f.variants.find((v) => v.variant_id === item.variant_id);
+          if (fv) liveStock = Number(fv.stock);
+        } else if (!item.variant_id && f.stock != null) {
+          liveStock = Number(f.stock);
+        }
+        const hasStock = Number.isFinite(Number(liveStock));
+        // Clamp the quantity down if stock dropped below it since add-time
+        // (e.g. the line shows 4 but only 1 remains → becomes 1).
+        const clampedQty = hasStock ? Math.min(item.qty, Number(liveStock)) : item.qty;
         // Only write back when something actually changed — avoids
         // dropping a re-render bomb on every page navigation.
-        if (item.price === f.price && item.mrp === f.mrp) return item;
-        return { ...item, price: f.price, mrp: f.mrp };
+        if (item.price === f.price && item.mrp === f.mrp
+            && item.stock === (hasStock ? Number(liveStock) : item.stock)
+            && item.qty === clampedQty) return item;
+        return {
+          ...item,
+          price: f.price,
+          mrp: f.mrp,
+          qty: clampedQty,
+          ...(hasStock ? { stock: Number(liveStock) } : {}),
+        };
       }));
     } catch { /* ignore network blips — stale price is better than crash */ }
   }, []);
