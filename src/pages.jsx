@@ -7,7 +7,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { api, resolveImageUrl } from './api';
 import { ProductCard, ProductImage, Field, TextInput, SelectInput, ShareMenu } from './components';
-import { useCart, useAuth, useWishlist, useToast, useSettings, canCancelOrderClient, cartLineKey } from './contexts';
+import { useCart, useAuth, useWishlist, useToast, useSettings, useSuggestions, canCancelOrderClient, cartLineKey } from './contexts';
 import { formatCurrency, formatDateTime } from './lib/format';
 import { LuxuryBackground } from './LuxuryBackground';
 import { firebaseAuthEnabled, setupRecaptcha, sendOtp, verifyOtpAndGetToken, toE164 } from './lib/firebase';
@@ -259,6 +259,7 @@ const DEFAULT_TILE_STYLE = { gradient: 'linear-gradient(135deg, #7a1f2a 0%, #2a0
 export function HomePage({ onNavigate }) {
   const { t } = useTranslation();
   const { addItem } = useCart();
+  const { triggerSuggestions } = useSuggestions();
   const toast = useToast();
   const settings = useSettings();
   const [products, setProducts] = useState([]);
@@ -296,7 +297,7 @@ export function HomePage({ onNavigate }) {
   // after that paint, so we need a second pass.
   useScrollReveal([loading]);
 
-  const onAdd = (p) => { addItem(p); toast.push(t('products.addedToCart', { name: p.name })); };
+  const onAdd = (p) => { addItem(p); toast.push(t('products.addedToCart', { name: p.name })); triggerSuggestions(p); };
 
   // Editor's Pick = the highest-priced item we've fetched (the bridal
   // tier). Falls back to first product if pricing is uniform.
@@ -724,6 +725,7 @@ export function HomePage({ onNavigate }) {
 export function ProductListPage({ onNavigate, params }) {
   const { t } = useTranslation();
   const { addItem } = useCart();
+  const { triggerSuggestions } = useSuggestions();
   const toast = useToast();
   const settings = useSettings();
   // Slider cap is admin-driven via BusinessSettings.max_price_filter_cap.
@@ -770,7 +772,7 @@ export function ProductListPage({ onNavigate, params }) {
   if (sortBy === 'price-high') filtered = [...filtered].sort((a, b) => b.price - a.price);
   if (sortBy === 'rating') filtered = [...filtered].sort((a, b) => b.rating - a.rating);
 
-  const onAdd = (p) => { addItem(p); toast.push(t('products.addedToCart', { name: p.name })); };
+  const onAdd = (p) => { addItem(p); toast.push(t('products.addedToCart', { name: p.name })); triggerSuggestions(p); };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
@@ -889,6 +891,7 @@ function buildProductBadges(settings, product, nextSlot) {
 export function ProductDetailsPage({ params, onNavigate }) {
   const { t } = useTranslation();
   const { addItem, items: cartItems } = useCart();
+  const { triggerSuggestions } = useSuggestions();
   const toast = useToast();
   const settings = useSettings();
   const [product, setProduct] = useState(null);
@@ -1182,6 +1185,7 @@ export function ProductDetailsPage({ params, onNavigate }) {
               if (navigateAfter) { onNavigate('cart'); return; }
               if (res?.capped) toast.push(t('products.onlyNAvailable', { count: res.stock }), 'error');
               else toast.push(t('products.qtyAdded', { qty, name: product.name }));
+              triggerSuggestions(product);
             };
 
             return (
@@ -1245,7 +1249,7 @@ export function ProductDetailsPage({ params, onNavigate }) {
             {related.map(p => (
               <ProductCard key={p.id} product={p}
                 onClick={() => { onNavigate('product', { id: p.id }); }}
-                onAdd={(prod) => { addItem(prod); toast.push(t('products.addedToCart', { name: prod.name })); }} />
+                onAdd={(prod) => { addItem(prod); toast.push(t('products.addedToCart', { name: prod.name })); triggerSuggestions(prod); }} />
             ))}
           </div>
         </section>
@@ -4531,6 +4535,7 @@ export function WishlistPage({ onNavigate }) {
   const auth = useAuth();
   const wishlist = useWishlist();
   const cart = useCart();
+  const { triggerSuggestions } = useSuggestions();
   const toast = useToast();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -4574,7 +4579,7 @@ export function WishlistPage({ onNavigate }) {
             {items.map(p => (
               <ProductCard key={p.id} product={p}
                 onClick={() => onNavigate('product', { id: p.id })}
-                onAdd={(prod) => { cart.addItem(prod); toast.push(t('products.addedToCart', { name: prod.name })); }} />
+                onAdd={(prod) => { cart.addItem(prod); toast.push(t('products.addedToCart', { name: prod.name })); triggerSuggestions(prod); }} />
             ))}
           </div>
         )}

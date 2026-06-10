@@ -5530,6 +5530,19 @@ const SETTINGS_SECTIONS = [
     },
   },
   {
+    id: 'frequently_bought',
+    title: 'Frequently Bought Together',
+    blurb: 'Cross-sell pop-up: when a customer adds a product from a chosen category, suggest related products with quick add-to-cart buttons.',
+    icon: Sparkles,
+    color: 'emerald',
+    summary: (d) => {
+      const rules = Array.isArray(d?.cross_sell_rules) ? d.cross_sell_rules : [];
+      if (rules.length === 0) return 'No rules configured';
+      const on = rules.filter((r) => r.enabled).length;
+      return `${on}/${rules.length} live`;
+    },
+  },
+  {
     id: 'translations',
     title: 'Storefront copy translations',
     blurb: 'Hindi + Bengali translations for company branding, support copy, hero pills and product-detail badges. Empty fields fall back to English.',
@@ -5980,6 +5993,255 @@ function CategoryPromotionsEditor({ draft, setDraft, errors, canWrite }) {
       )}
       {promos.length >= 12 && (
         <p className="mt-2 text-[11px] text-slate-400">Maximum 12 promotions per marquee.</p>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// FrequentlyBoughtEditor — manages BusinessSettings.cross_sell_rules, the
+// "Suggested items / Frequently bought together" modal. Each rule pairs a
+// TRIGGER category (the modal fires when a customer adds a product from it)
+// with a list of SUGGESTED products shown in the modal, plus an editable
+// title/subtitle, an enabled toggle, reorder and remove. Suggested products
+// are deliberately not constrained to the trigger category — cross-sell often
+// pairs across categories (e.g. add a saree → suggest blouses + petticoats).
+// ============================================================
+const FBT_TITLE_DEFAULT = 'Frequently bought together';
+const FBT_MAX_PRODUCTS = 12;
+const FBT_MAX_RULES = 30;
+
+function FrequentlyBoughtEditor({ draft, setDraft, errors, canWrite }) {
+  const rules = draft.cross_sell_rules || [];
+  const [categories, setCategories] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [pickerOpen, setPickerOpen] = useState(null); // index of the rule whose product picker is expanded
+  const [search, setSearch] = useState('');
+
+  // Categories drive the trigger dropdown; products drive the suggestion picker.
+  useEffect(() => {
+    adminApi.listCategories().then((r) => setCategories(r.data || [])).catch(() => setCategories([]));
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingProducts(true);
+      try {
+        const all = [];
+        let page = 1, totalPages = 1;
+        // Page through Active products (API caps at 100/page); hard stop at
+        // 1000 so a runaway catalog can't hang the editor.
+        do {
+          const r = await adminApi.listProducts({ status: 'Active', limit: 100, page });
+          all.push(...(r.data || []));
+          totalPages = r.meta?.totalPages || 1;
+          page += 1;
+        } while (page <= totalPages && page <= 10);
+        if (!cancelled) setProducts(all);
+      } catch {
+        if (!cancelled) setProducts([]);
+      } finally {
+        if (!cancelled) setLoadingProducts(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const productMap = Object.fromEntries(products.map((p) => [p.product_id, p]));
+  // NOTE: the admin categories endpoint returns `category_id` (not `id` like the
+  // storefront serializer) — match/store on that so trigger ids line up with
+  // the storefront's product.category (also a category_id).
+  const catName = (id) => categories.find((c) => c.category_id === id)?.name || id;
+
+  const update = (next) => setDraft((d) => ({ ...d, cross_sell_rules: next }));
+  const setOne = (idx, patch) => update(rules.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  const removeOne = (idx) => { update(rules.filter((_, i) => i !== idx)); setPickerOpen(null); };
+  const moveOne = (idx, delta) => {
+    const j = idx + delta;
+    if (j < 0 || j >= rules.length) return;
+    const next = [...rules];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    update(next);
+  };
+  const addOne = () => {
+    const newId = `fbt-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`;
+    update([
+      ...rules,
+      { id: newId, trigger_category_id: categories[0]?.category_id || '', title: FBT_TITLE_DEFAULT, subtitle: '', product_ids: [], enabled: true },
+    ]);
+  };
+  const toggleProduct = (idx, pid) => {
+    const r = rules[idx];
+    const has = r.product_ids.includes(pid);
+    if (!has && r.product_ids.length >= FBT_MAX_PRODUCTS) return; // cap reached
+    setOne(idx, { product_ids: has ? r.product_ids.filter((x) => x !== pid) : [...r.product_ids, pid] });
+  };
+
+  const q = search.trim().toLowerCase();
+  const filteredProducts = q
+    ? products.filter((p) => p.name.toLowerCase().includes(q) || (p.category_name || '').toLowerCase().includes(q))
+    : products;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="block text-sm font-semibold text-slate-700">Suggestion rules</label>
+        <span className="text-xs text-slate-500">{rules.filter((r) => r.enabled).length} of {rules.length} live</span>
+      </div>
+      <p className="text-xs text-slate-500 mb-3">
+        When a customer adds a product from the <strong>trigger category</strong>, a “Suggested items” pop-up shows the products you pick here, each with a quick Add button. Disable a rule to pause it without losing the setup.
+      </p>
+
+      <div className="space-y-4">
+        {rules.length === 0 && (
+          <div className="text-xs text-slate-400 italic px-3 py-4 border border-dashed border-slate-200 rounded-lg text-center">
+            No rules yet. The suggestion pop-up stays off until you add one.
+          </div>
+        )}
+
+        {rules.map((r, i) => {
+          const triggerMissing = r.trigger_category_id && categories.length > 0 && !categories.some((c) => c.category_id === r.trigger_category_id);
+          return (
+            <div key={r.id + '_' + i} className={`border rounded-xl p-4 shadow-sm ${r.enabled ? 'border-slate-200 bg-white' : 'border-slate-200 bg-slate-50 opacity-80'}`}>
+              {/* Row 1: trigger category + enable/reorder/remove controls */}
+              <div className="flex flex-wrap gap-3 items-start justify-between">
+                <div className="flex-1 min-w-[220px] space-y-2">
+                  <label className="flex flex-col text-xs">
+                    <span className="text-slate-500 mb-0.5">When a customer adds from category</span>
+                    <select value={r.trigger_category_id || ''} disabled={!canWrite}
+                      onChange={(e) => setOne(i, { trigger_category_id: e.target.value })}
+                      className={`px-2 py-1.5 border rounded-lg text-sm disabled:bg-slate-50 ${triggerMissing ? 'border-amber-300' : 'border-slate-200'}`}>
+                      <option value="">— pick a category —</option>
+                      {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.icon ? `${c.icon} ` : ''}{c.name}</option>)}
+                      {triggerMissing && <option value={r.trigger_category_id}>{r.trigger_category_id} (removed)</option>}
+                    </select>
+                    {triggerMissing && (
+                      <span className="text-[11px] text-amber-600 mt-0.5">This category no longer exists — the pop-up won’t fire until you pick a current one.</span>
+                    )}
+                  </label>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button type="button" disabled={!canWrite} onClick={() => setOne(i, { enabled: !r.enabled })}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${r.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500'}`}>
+                    {r.enabled ? 'Live' : 'Off'}
+                  </button>
+                  <button type="button" disabled={!canWrite || i === 0} onClick={() => moveOne(i, -1)}
+                    className="px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40" aria-label="Move up">▲</button>
+                  <button type="button" disabled={!canWrite || i === rules.length - 1} onClick={() => moveOne(i, 1)}
+                    className="px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40" aria-label="Move down">▼</button>
+                  <button type="button" disabled={!canWrite} onClick={() => removeOne(i)}
+                    className="px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:text-red-600 hover:border-red-200 disabled:opacity-40" aria-label="Remove rule">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: heading + subtitle copy shown in the modal */}
+              <div className="grid sm:grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-100">
+                <label className="flex flex-col text-xs">
+                  <span className="text-slate-500 mb-0.5">Pop-up heading</span>
+                  <input type="text" value={r.title || ''} disabled={!canWrite} maxLength={80}
+                    placeholder={FBT_TITLE_DEFAULT}
+                    onChange={(e) => setOne(i, { title: e.target.value })}
+                    className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50" />
+                </label>
+                <label className="flex flex-col text-xs">
+                  <span className="text-slate-500 mb-0.5">Sub-text (optional)</span>
+                  <input type="text" value={r.subtitle || ''} disabled={!canWrite} maxLength={140}
+                    placeholder="e.g. Complete your look"
+                    onChange={(e) => setOne(i, { subtitle: e.target.value })}
+                    className="px-2 py-1.5 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50" />
+                </label>
+              </div>
+
+              {/* Row 3: suggested products — selected chips + expandable picker */}
+              <div className="mt-3 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-slate-500">Suggested products ({r.product_ids.length}/{FBT_MAX_PRODUCTS})</span>
+                  <button type="button" disabled={!canWrite}
+                    onClick={() => { setPickerOpen(pickerOpen === i ? null : i); setSearch(''); }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 disabled:opacity-40">
+                    <Plus className="w-3.5 h-3.5" /> {pickerOpen === i ? 'Done' : 'Choose products'}
+                  </button>
+                </div>
+
+                {/* Selected chips */}
+                {r.product_ids.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">No products chosen yet — this rule won’t show a pop-up.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {r.product_ids.map((pid) => {
+                      const p = productMap[pid];
+                      return (
+                        <span key={pid} className={`inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-full border text-xs ${p ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                          {p ? (
+                            <span className="w-5 h-5 rounded-full overflow-hidden bg-white shrink-0"><ProductImage src={p.image} alt="" className="w-full h-full object-cover" /></span>
+                          ) : null}
+                          <span className="max-w-[140px] truncate">{p ? p.name : `${pid} (removed)`}</span>
+                          {canWrite && (
+                            <button type="button" onClick={() => toggleProduct(i, pid)} className="text-slate-400 hover:text-red-600" aria-label="Remove product"><X className="w-3 h-3" /></button>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Expandable searchable picker */}
+                {pickerOpen === i && (
+                  <div className="mt-2 border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="p-2 border-b border-slate-100 bg-slate-50">
+                      <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search products by name or category…"
+                        className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-sm" />
+                    </div>
+                    <div className="max-h-64 overflow-auto divide-y divide-slate-100">
+                      {loadingProducts ? (
+                        <div className="px-3 py-4 text-xs text-slate-400 inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Loading products…</div>
+                      ) : filteredProducts.length === 0 ? (
+                        <div className="px-3 py-4 text-xs text-slate-400">No products match “{search}”.</div>
+                      ) : (
+                        filteredProducts.map((p) => {
+                          const checked = r.product_ids.includes(p.product_id);
+                          const capped = !checked && r.product_ids.length >= FBT_MAX_PRODUCTS;
+                          return (
+                            <label key={p.product_id} className={`flex items-center gap-2.5 px-3 py-2 text-sm ${capped ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'}`}>
+                              <input type="checkbox" checked={checked} disabled={!canWrite || capped}
+                                onChange={() => toggleProduct(i, p.product_id)} className="accent-slate-900" />
+                              <span className="w-7 h-7 rounded-md overflow-hidden bg-slate-100 shrink-0"><ProductImage src={p.image} alt="" className="w-full h-full object-cover" /></span>
+                              <span className="flex-1 min-w-0">
+                                <span className="block truncate text-slate-800">{p.name}</span>
+                                <span className="block text-[11px] text-slate-400 truncate">{p.category_name || catName(p.category_id)}</span>
+                              </span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    {r.product_ids.length >= FBT_MAX_PRODUCTS && (
+                      <div className="px-3 py-1.5 text-[11px] text-amber-600 bg-amber-50 border-t border-amber-100">Maximum {FBT_MAX_PRODUCTS} suggestions per rule reached.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {canWrite && rules.length < FBT_MAX_RULES && (
+        <button type="button" onClick={addOne} disabled={categories.length === 0}
+          title={categories.length === 0 ? 'Create a category first' : undefined}
+          className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-semibold text-slate-700 disabled:opacity-40">
+          <Plus className="w-3.5 h-3.5" /> Add rule
+        </button>
+      )}
+      {rules.length >= FBT_MAX_RULES && (
+        <p className="mt-2 text-[11px] text-slate-400">Maximum {FBT_MAX_RULES} rules.</p>
+      )}
+      {errors.cross_sell_rules && (
+        <p className="mt-2 text-[11px] text-red-600">{errors.cross_sell_rules}</p>
       )}
     </div>
   );
@@ -7437,6 +7699,7 @@ function AdminSettingsPage({ route, navigate }) {
     home_hero_features: mergeBadges(DEFAULT_HOME_HERO_FEATURES, d.home_hero_features),
     delivery_slots: Array.isArray(d.delivery_slots) ? d.delivery_slots : [],
     category_promotions: Array.isArray(d.category_promotions) ? d.category_promotions : [],
+    cross_sell_rules: Array.isArray(d.cross_sell_rules) ? d.cross_sell_rules : [],
     max_price_filter_auto: d.max_price_filter_auto ?? true,
     max_price_filter_cap: String(d.max_price_filter_cap ?? 150),
     global_discount_enabled: !!d.global_discount_enabled,
@@ -7487,6 +7750,7 @@ function AdminSettingsPage({ route, navigate }) {
        !== JSON.stringify(mergeBadges(DEFAULT_HOME_HERO_FEATURES, data.home_hero_features))
     || JSON.stringify(draft.delivery_slots || []) !== JSON.stringify(data.delivery_slots || [])
     || JSON.stringify(draft.category_promotions || []) !== JSON.stringify(data.category_promotions || [])
+    || JSON.stringify(draft.cross_sell_rules || []) !== JSON.stringify(data.cross_sell_rules || [])
     || !!draft.max_price_filter_auto !== !!data.max_price_filter_auto
     || Number(draft.max_price_filter_cap) !== Number(data.max_price_filter_cap ?? 150)
     || !!draft.global_discount_enabled !== !!data.global_discount_enabled
@@ -7696,6 +7960,16 @@ function AdminSettingsPage({ route, navigate }) {
             width_desktop_px: dim(p.width_desktop_px),
           };
         }),
+        cross_sell_rules: (draft.cross_sell_rules || []).map((r) => ({
+          id: String(r.id).trim(),
+          trigger_category_id: String(r.trigger_category_id || '').trim(),
+          title: String(r.title || '').trim(),
+          subtitle: String(r.subtitle || '').trim(),
+          // De-dupe + keep only string ids; cap defensively at the schema max.
+          product_ids: Array.from(new Set((Array.isArray(r.product_ids) ? r.product_ids : [])
+            .map((x) => String(x).trim()).filter(Boolean))).slice(0, 12),
+          enabled: !!r.enabled,
+        })).filter((r) => r.trigger_category_id), // drop half-built rows with no trigger
         max_price_filter_auto: !!draft.max_price_filter_auto,
         // Send a sane fallback when the field is blank/invalid in auto
         // mode so the backend Zod schema (min(1)) doesn't reject the
@@ -7796,7 +8070,7 @@ function AdminSettingsPage({ route, navigate }) {
           )}
         </div>
       ) : (
-        <form onSubmit={onSubmit} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 max-w-2xl space-y-5">
+        <form onSubmit={onSubmit} className={`bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 space-y-5 ${activeSection === 'frequently_bought' ? 'max-w-3xl' : 'max-w-2xl'}`}>
           {/* Back-to-tiles header. Title pulls from SETTINGS_SECTIONS so it
               stays in lockstep with the tile catalog. */}
           <div className="flex items-center gap-3 -mt-1 mb-1">
@@ -8434,6 +8708,15 @@ function AdminSettingsPage({ route, navigate }) {
               Upload sale-banner images and link each one to a category. The marquee scrolls across the top of the home page; tapping an image opens that category's product listing. Reorder with the ▲ ▼ controls — the on-screen order matches the list below.
             </p>
             <CategoryPromotionsEditor draft={draft} setDraft={setDraft} errors={errors} canWrite={canWrite} />
+          </div>
+          )}
+
+          {activeSection === 'frequently_bought' && (
+          <div className="space-y-5">
+            <p className="text-xs text-slate-500">
+              Build cross-sell rules that boost basket size. Each rule watches a <strong>trigger category</strong> — the moment a customer adds any product from it to their cart, a “Suggested items” pop-up offers the related products you’ve picked, each with a one-tap Add button. Turn a rule off to pause it without deleting your selections.
+            </p>
+            <FrequentlyBoughtEditor draft={draft} setDraft={setDraft} errors={errors} canWrite={canWrite} />
           </div>
           )}
 

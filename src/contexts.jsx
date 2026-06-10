@@ -311,6 +311,70 @@ export function WishlistProvider({ children }) {
 }
 
 // ============================================================
+// SUGGESTIONS CONTEXT — "Frequently Bought Together" cross-sell
+// ============================================================
+// Holds the admin-configured cross_sell_rules (from settings) and the catalog,
+// and decides whether adding a given product should pop the Suggested-items
+// modal. triggerSuggestions(product) is called by the add-to-cart handlers;
+// it finds the first enabled rule whose trigger category matches the product,
+// resolves that rule's suggested products (in stock, excluding the one just
+// added) and, if any remain, opens the modal. The catalog is fetched lazily on
+// the first trigger and cached, so browsing customers who never add anything
+// pay nothing. Failures are swallowed — a suggestion must never block an add.
+// ============================================================
+const SuggestionsContext = createContext(null);
+export const useSuggestions = () => useContext(SuggestionsContext);
+
+export function SuggestionsProvider({ children }) {
+  const settings = useSettings();
+  const [suggestion, setSuggestion] = useState(null); // { id, rule, products } | null
+  const productsRef = useRef(null);
+  const seqRef = useRef(0); // monotonic id so the modal remounts fresh per open
+
+  const rules = Array.isArray(settings?.cross_sell_rules) ? settings.cross_sell_rules : [];
+
+  const ensureProducts = useCallback(async () => {
+    if (productsRef.current) return productsRef.current;
+    const r = await api.getProducts();
+    productsRef.current = Array.isArray(r?.data) ? r.data : [];
+    return productsRef.current;
+  }, []);
+
+  const hasStock = (p) => {
+    if (!p) return false;
+    if (Array.isArray(p.variants) && p.variants.length > 0) return p.variants.some((v) => Number(v.stock) > 0);
+    return Number(p.stock) > 0;
+  };
+
+  const triggerSuggestions = useCallback(async (product) => {
+    try {
+      if (!product) return;
+      const rule = rules.find((r) =>
+        r.enabled
+        && r.trigger_category_id === product.category
+        && Array.isArray(r.product_ids) && r.product_ids.length > 0);
+      if (!rule) return;
+      const all = await ensureProducts();
+      const byId = Object.fromEntries(all.map((p) => [p.id, p]));
+      const list = rule.product_ids
+        .map((id) => byId[id])
+        .filter((p) => p && p.id !== product.id && hasStock(p));
+      if (list.length === 0) return;
+      seqRef.current += 1;
+      setSuggestion({ id: seqRef.current, rule, products: list });
+    } catch { /* never block add-to-cart on a suggestion failure */ }
+  }, [rules, ensureProducts]);
+
+  const closeSuggestion = useCallback(() => setSuggestion(null), []);
+
+  return (
+    <SuggestionsContext.Provider value={{ suggestion, triggerSuggestions, closeSuggestion }}>
+      {children}
+    </SuggestionsContext.Provider>
+  );
+}
+
+// ============================================================
 // SETTINGS CONTEXT — operational thresholds + support contacts
 // Fetched once on the customer side and shared with the footer, the floating
 // help widget, and any other component that needs them. Falls back to

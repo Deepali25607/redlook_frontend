@@ -425,6 +425,15 @@
     "subtitle": "Faster shopping, right on your phone.",
     "download": "Download"
   },
+  "fbt": {
+    "addedToCart": "Added to cart",
+    "title": "Frequently bought together",
+    "add": "Add",
+    "added": "Added",
+    "choose": "Choose options",
+    "viewCart": "View cart",
+    "continue": "Keep shopping"
+  },
   "errors": {
     "generic": "Something went wrong",
     "couldNotLoad": "Could not load {{name}}",

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useTranslation } from 'react-i18next';
-import { useCart, useAuth, useWishlist, useToast, useSettings } from './contexts';
+import { useCart, useAuth, useWishlist, useToast, useSettings, useSuggestions } from './contexts';
 import { resolveImageUrl } from './api';
 import { routeToPath } from './router';
 import { SUPPORTED_LANGUAGES } from './i18n';
@@ -513,6 +513,104 @@ export function PullToRefresh() {
           className={`block w-5 h-5 rounded-full border-2 border-rose-500 border-t-transparent ${refreshing ? 'animate-spin' : ''}`}
           style={refreshing ? undefined : { transform: `rotate(${pull * 3}deg)`, opacity: ready ? 1 : 0.5 }}
         />
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// FREQUENTLY BOUGHT TOGETHER — cross-sell suggestion modal
+// ============================================================
+// Driven by useSuggestions(): when an add-to-cart matches an admin cross-sell
+// rule, `suggestion` is set and this modal pops with the rule's products. The
+// outer component just gates on `suggestion`; the inner is keyed by
+// suggestion.id so each open starts with a fresh "added" state (no effects).
+export function FrequentlyBoughtModal({ onNavigate }) {
+  const { suggestion } = useSuggestions();
+  if (!suggestion) return null;
+  return <FrequentlyBoughtModalInner key={suggestion.id} suggestion={suggestion} onNavigate={onNavigate} />;
+}
+
+function FrequentlyBoughtModalInner({ suggestion, onNavigate }) {
+  const { t } = useTranslation();
+  const { addItem } = useCart();
+  const { closeSuggestion } = useSuggestions();
+  const [added, setAdded] = useState({}); // product id → true once quick-added
+  const { rule, products } = suggestion;
+
+  // Navigate the SPA to a product without prop-drilling navigate into context:
+  // pushState + a synthetic popstate triggers App's existing popstate handler.
+  const goToProduct = (p) => {
+    closeSuggestion();
+    const path = routeToPath('product', { id: p.id });
+    if (window.location.pathname + window.location.search !== path) {
+      window.history.pushState({}, '', path);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    window.scrollTo(0, 0);
+  };
+
+  const quickAdd = (p) => {
+    // Variant products need a colour choice — send the customer to the PDP.
+    if (Array.isArray(p.variants) && p.variants.length > 0) { goToProduct(p); return; }
+    addItem(p, 1);
+    setAdded((m) => ({ ...m, [p.id]: true }));
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/50 animate-[fadeIn_.15s_ease-out]" onClick={closeSuggestion} />
+      <div role="dialog" aria-modal="true" aria-label={rule.title || t('fbt.title')}
+        className="relative w-full sm:max-w-lg max-h-[88vh] overflow-auto bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl">
+        <div className="sticky top-0 z-10 bg-white dark:bg-slate-900 px-5 pt-5 pb-3 border-b border-stone-100 dark:border-slate-800 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 text-[11px] font-bold uppercase tracking-wide mb-1">
+              <Check className="w-3.5 h-3.5" /> {t('fbt.addedToCart')}
+            </div>
+            <h3 className="font-bold text-lg text-stone-900 dark:text-slate-100 leading-snug">{rule.title || t('fbt.title')}</h3>
+            {rule.subtitle ? <p className="text-sm text-stone-500 dark:text-slate-400 mt-0.5">{rule.subtitle}</p> : null}
+          </div>
+          <button onClick={closeSuggestion} aria-label={t('common.close')}
+            className="shrink-0 p-1 text-stone-400 hover:text-stone-700 dark:hover:text-slate-200"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="p-4 grid grid-cols-2 gap-3">
+          {products.map((p) => {
+            const hasVariants = Array.isArray(p.variants) && p.variants.length > 0;
+            const isAdded = added[p.id];
+            return (
+              <div key={p.id} className="border border-stone-200 dark:border-slate-700 rounded-2xl overflow-hidden flex flex-col">
+                <button onClick={() => goToProduct(p)} className="aspect-square bg-stone-50 dark:bg-slate-800 overflow-hidden" aria-label={p.name}>
+                  <ProductImage src={p.image} alt={p.name} className="w-full h-full object-cover" />
+                </button>
+                <div className="p-2.5 flex flex-col gap-1.5 flex-1">
+                  <button onClick={() => goToProduct(p)} className="text-left text-sm font-semibold text-stone-900 dark:text-slate-100 line-clamp-2 leading-snug">{p.name}</button>
+                  <div className="mt-auto text-sm">
+                    {p.mrp != null && p.mrp > p.price && <span className="text-[11px] text-stone-400 line-through mr-1">{formatCurrency(p.mrp)}</span>}
+                    <span className="font-bold text-stone-900 dark:text-slate-100">{formatCurrency(p.price)}</span>
+                  </div>
+                  <button onClick={() => quickAdd(p)} disabled={isAdded}
+                    className={`mt-1 w-full inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                      isAdded ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
+                    {isAdded
+                      ? (<><Check className="w-3.5 h-3.5" /> {t('fbt.added')}</>)
+                      : hasVariants
+                        ? t('fbt.choose')
+                        : (<><Plus className="w-3.5 h-3.5" /> {t('fbt.add')}</>)}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="sticky bottom-0 bg-white dark:bg-slate-900 px-4 pb-5 pt-2 border-t border-stone-100 dark:border-slate-800 flex gap-2">
+          <button onClick={() => { closeSuggestion(); onNavigate?.('cart'); }}
+            className="flex-1 bg-stone-900 hover:bg-stone-800 text-white rounded-xl px-4 py-2.5 text-sm font-semibold">{t('fbt.viewCart')}</button>
+          <button onClick={closeSuggestion}
+            className="flex-1 border border-stone-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm font-semibold text-stone-700 dark:text-slate-200">{t('fbt.continue')}</button>
+        </div>
       </div>
     </div>
   );

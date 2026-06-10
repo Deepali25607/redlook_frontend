@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { AuthProvider, CartProvider, WishlistProvider, ToastProvider, SettingsProvider, ThemeProvider } from './contexts';
-import { Navbar, Footer, SupportWidget, AppDownloadBanner, PullToRefresh } from './components';
+import { AuthProvider, CartProvider, WishlistProvider, ToastProvider, SettingsProvider, ThemeProvider, SuggestionsProvider } from './contexts';
+import { Navbar, Footer, SupportWidget, AppDownloadBanner, PullToRefresh, FrequentlyBoughtModal } from './components';
 import {
   HomePage, ProductListPage, ProductDetailsPage, CartPage,
   LoginPage, RegisterPage, OtpVerifyPage, ForgotPasswordPage, ResetOtpPage, ResetPasswordPage,
@@ -112,6 +112,7 @@ export default function App() {
           <AuthProvider>
             <CartProvider>
               <WishlistProvider>
+               <SuggestionsProvider>
                 {/* Background colour now comes from the active theme on <html>
                     (see index.css). The wrapper just lets the gradient show
                     through and provides the column flex layout.
@@ -131,7 +132,9 @@ export default function App() {
                   <Footer onNavigate={navigate} />
                   <SupportWidget />
                   <AppDownloadBanner />
+                  <FrequentlyBoughtModal onNavigate={navigate} />
                 </div>
+               </SuggestionsProvider>
               </WishlistProvider>
             </CartProvider>
           </AuthProvider>
