@@ -431,6 +431,17 @@ function appDownloadUrl() {
   return APP_APK_URL;
 }
 
+// Canonical public origin for SHARE links. In production builds this is the
+// live domain (VITE_PUBLIC_SITE_URL), so a link shared from inside the native
+// app — where window.location.origin is "http://localhost" — still points at
+// the real, openable site and gets auto-linkified by WhatsApp/etc. Falls back
+// to the current origin in dev where the env var isn't set.
+const PUBLIC_SITE_URL = (import.meta.env.VITE_PUBLIC_SITE_URL || '').replace(/\/+$/, '');
+function shareBaseUrl() {
+  if (PUBLIC_SITE_URL) return PUBLIC_SITE_URL;
+  return typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+}
+
 // ============================================================
 // PULL TO REFRESH — swipe down at the top of the page to reload.
 // The Android WebView has no native pull-to-refresh, so we synthesise one from
@@ -684,10 +695,13 @@ export function ShareMenu({ product, className = '' }) {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  // routeToPath gives the in-app path ("/products/:id"); prefix the current
-  // origin so the link resolves when opened outside the app (WhatsApp, mail…).
+  // routeToPath gives the in-app path ("/products/:id"); prefix the canonical
+  // PUBLIC site origin (not window.location.origin) so the link resolves when
+  // opened outside the app. Inside the installed app the origin is
+  // "http://localhost", which WhatsApp won't linkify and recipients can't open;
+  // shareBaseUrl() yields the live https domain instead.
   const path = routeToPath('product', { id: product.id });
-  const url = typeof window !== 'undefined' ? window.location.origin + path : path;
+  const url = shareBaseUrl() + path;
   const title = product.name;
   const text = t('share.message', { name: product.name });
 
