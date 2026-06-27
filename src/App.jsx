@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { AuthProvider, CartProvider, WishlistProvider, ToastProvider, SettingsProvider, ThemeProvider, SuggestionsProvider } from './contexts';
 import { Navbar, Footer, SupportWidget, AppDownloadBanner, PullToRefresh, FrequentlyBoughtModal } from './components';
 import {
@@ -7,8 +7,12 @@ import {
   ProfilePage, AddressesPage, CheckoutPage, OrderConfirmationPage,
   OrdersPage, OrderTrackingPage, WishlistPage, MyCreditPage, NotFoundPage,
 } from './pages';
-import { AdminAuthProvider, AdminApp } from './admin';
 import { pathToRoute, routeToPath } from './router';
+
+// Admin portal is code-split: React.lazy defers loading the ~8.7k-line admin
+// bundle until an /admin route is actually visited, keeping it out of the
+// storefront's initial download. See AdminPortal.jsx.
+const AdminPortal = lazy(() => import('./AdminPortal'));
 
 const ROUTES = {
   'home': HomePage,
@@ -95,9 +99,11 @@ export default function App() {
     return (
       <ToastProvider>
         <ThemeProvider>
-          <AdminAuthProvider>
-            <AdminApp route={route} navigate={navigate} />
-          </AdminAuthProvider>
+          {/* Blank full-height fallback while the admin chunk streams in —
+              avoids a spinner flash and keeps the dark theme background. */}
+          <Suspense fallback={<div className="min-h-screen" />}>
+            <AdminPortal route={route} navigate={navigate} />
+          </Suspense>
         </ThemeProvider>
       </ToastProvider>
     );
