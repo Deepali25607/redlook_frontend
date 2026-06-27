@@ -23,9 +23,13 @@ import { formatCurrency } from './lib/format';
 // `size` is appended to the className when rendering the <img> so cards can
 // cap the image height; it's ignored for emojis since text-Nxl on the parent
 // already controls glyph size.
-export function ProductImage({ src, alt, className = 'w-full h-full object-cover' }) {
-  const url = resolveImageUrl(src);
-  if (url) return <img src={url} alt={alt || ''} className={className} loading="lazy" />;
+// `width` (optional) is the approximate display width in CSS px; it's passed
+// through to resolveImageUrl so ImageKit serves a right-sized derivative
+// instead of a full-resolution image scaled down in the browser. Defaults to
+// 600 — large enough for retina product cards, small enough to stay light.
+export function ProductImage({ src, alt, className = 'w-full h-full object-cover', width = 600 }) {
+  const url = resolveImageUrl(src, width);
+  if (url) return <img src={url} alt={alt || ''} className={className} loading="lazy" decoding="async" />;
   return <>{src}</>;
 }
 

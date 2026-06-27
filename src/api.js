@@ -16,14 +16,96 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localho
 // this empty and the resolveImageUrl helper short-circuits to null.
 export const API_HOST = USE_MOCK ? '' : API_BASE_URL.replace(/\/api\/?$/, '');
 
+// Injects ImageKit delivery optimizations into an ImageKit URL so images
+// are served in a modern format (AVIF/WebP when the browser supports it)
+// at a compressed-but-visually-lossless quality. This is what makes the
+// storefront feel fast: a 1.5 MB JPEG becomes a ~150 KB AVIF with no
+// perceptible quality drop, and ImageKit's CDN caches the derivative.
+//
+// `width` (optional) additionally caps the rendered pixel width with
+// `c-at_max` (fits within the box, never upscales), so product cards
+// don't download a 2000px image to display it at 200px. Pass it from
+// grids/thumbnails.
+//
+// Uses ImageKit's query-param transform (`?tr=...`). Non-ImageKit URLs
+// (legacy /uploads, data:, other hosts) pass through untouched, and if a
+// `tr` transform is already present we leave it alone to avoid stacking.
+function optimizeImageKit(url, width) {
+  if (typeof url !== 'string' || !url.includes('imagekit.io')) return url;
+  if (/[?&]tr=/.test(url)) return url; // already has a transformation
+  const parts = ['f-auto', 'q-80'];
+  if (width && Number.isFinite(width)) parts.push(`w-${Math.round(width)}`, 'c-at_max');
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}tr=${parts.join(',')}`;
+}
+
 // Returns a fully-qualified image URL when src is an upload path or absolute
 // URL, or null when src is an emoji / unrecognised string. Callers that want
 // "render <img> if URL else render text" branch on the return value.
-export function resolveImageUrl(src) {
+//
+// `width` (optional) requests a CDN-resized derivative for ImageKit-hosted
+// images — pass the approximate display width for thumbnails/grids.
+export function resolveImageUrl(src, width) {
   if (!src || typeof src !== 'string') return null;
-  if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) return src;
+  if (src.startsWith('http://') || src.startsWith('https://')) return optimizeImageKit(src, width);
+  if (src.startsWith('data:')) return src;
   if (src.startsWith('/uploads/')) return API_HOST ? `${API_HOST}${src}` : null;
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Client-side image compression
+// ---------------------------------------------------------------------------
+// Re-encodes a picked image in the browser BEFORE it's uploaded, so the bytes
+// that travel over the (often mobile) network are a fraction of the original.
+// A 4 MB phone photo becomes ~300 KB, which is the single biggest win for
+// "uploads are slow". Quality is preserved by:
+//   • capping the longest edge at `maxDimension` (downscaling a 4000px photo
+//     to 1600px is invisible once it's displayed at a few hundred px), and
+//   • encoding WebP at a high quality factor (0.82) that is visually lossless
+//     for saree/lehenga product photography.
+// Honours EXIF orientation (phone cameras) via imageOrientation so portrait
+// photos don't upload sideways.
+//
+// Safe-by-default: animated GIFs and SVGs are returned untouched (canvas would
+// flatten the animation / rasterise the vector), and if compression somehow
+// produces a LARGER file than the original we keep the original. Any failure
+// (decode error, unsupported browser) falls back to the original file, so an
+// upload never breaks because compression couldn't run.
+export async function compressImage(file, { maxDimension = 1600, quality = 0.82 } = {}) {
+  try {
+    if (!file || typeof file !== 'object') return file;
+    const type = file.type || '';
+    // GIF (possibly animated) and SVG (vector) must not be rasterised.
+    if (!type.startsWith('image/') || type === 'image/gif' || type === 'image/svg+xml') return file;
+    if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return file;
+
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null);
+    if (!bitmap) return file;
+
+    const { width, height } = bitmap;
+    const scale = Math.min(1, maxDimension / Math.max(width, height));
+    const targetW = Math.max(1, Math.round(width * scale));
+    const targetH = Math.max(1, Math.round(height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { bitmap.close?.(); return file; }
+    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    bitmap.close?.();
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
+    // toBlob unsupported for webp, or the re-encode didn't actually save bytes
+    // (already-optimized small image) — keep the original in both cases.
+    if (!blob || blob.size >= file.size) return file;
+
+    const baseName = (file.name || 'image').replace(/\.[^.]+$/, '');
+    return new File([blob], `${baseName}.webp`, { type: 'image/webp', lastModified: file.lastModified || undefined });
+  } catch {
+    return file; // never let compression failure block an upload
+  }
 }
 
 // Stored separately by AuthContext; we read it here so the mock layer can ignore
@@ -807,7 +889,9 @@ export const adminApi = {
     }
     const token = readAdminToken();
     const form = new FormData();
-    form.append('image', file);
+    // Compress in the browser first — uploads a few hundred KB instead of
+    // several MB, which is the main reason picking a product image felt slow.
+    form.append('image', await compressImage(file, { maxDimension: 1600, quality: 0.82 }));
     const res = await fetch(`${API_BASE_URL}/admin/uploads/product-image`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -837,7 +921,9 @@ export const adminApi = {
     }
     const token = readAdminToken();
     const form = new FormData();
-    form.append('image', file);
+    // Hero backgrounds are full-bleed, so keep a larger max edge than product
+    // thumbnails — still a big saving over the raw multi-MB original.
+    form.append('image', await compressImage(file, { maxDimension: 2200, quality: 0.85 }));
     const res = await fetch(`${API_BASE_URL}/admin/uploads/hero-image`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -867,7 +953,7 @@ export const adminApi = {
     }
     const token = readAdminToken();
     const form = new FormData();
-    form.append('image', file);
+    form.append('image', await compressImage(file, { maxDimension: 2000, quality: 0.85 }));
     const res = await fetch(`${API_BASE_URL}/admin/uploads/promo-image`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -898,7 +984,10 @@ export const adminApi = {
     }
     const token = readAdminToken();
     const form = new FormData();
-    form.append('image', file);
+    // Rider photos come straight from a phone camera (often 3–4 MB) over a
+    // mobile connection — compression here is the difference between an
+    // instant and a stalled "Mark Delivered".
+    form.append('image', await compressImage(file, { maxDimension: 1600, quality: 0.8 }));
     const res = await fetch(`${API_BASE_URL}/admin/uploads/delivery-photo`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
