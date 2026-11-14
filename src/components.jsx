@@ -3,11 +3,14 @@ import {
   ShoppingCart, Search, Leaf, Plus, Star, Heart, User, Menu, X,
   Package, MapPin, LogOut, ChevronDown, Headphones, Phone, Mail, MessageCircle,
   Globe, Sparkles, Share2, Send, Link as LinkIcon, Check, Download,
+  Truck, RotateCcw, ShieldCheck, Award, Gem,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useTranslation } from 'react-i18next';
 import { useCart, useAuth, useWishlist, useToast, useSettings, useSuggestions } from './contexts';
-import { resolveImageUrl } from './api';
+import { api, resolveImageUrl, resolveVideoUrl } from './api';
+import { trackSearch } from './seo/analytics';
+import { BUSINESS, isRealPhone } from './seo/seoConfig';
 import { routeToPath } from './router';
 import { SUPPORTED_LANGUAGES } from './i18n';
 import { formatCurrency } from './lib/format';
@@ -31,6 +34,143 @@ export function ProductImage({ src, alt, className = 'w-full h-full object-cover
   const url = resolveImageUrl(src, width);
   if (url) return <img src={url} alt={alt || ''} className={className} loading="lazy" decoding="async" />;
   return <>{src}</>;
+}
+
+// ============================================================
+// HERO BACKGROUND — dynamic homepage hero media (image OR video),
+// driven by the admin's "Homepage Background" manager. Rendered as
+// absolutely-positioned children inside the hero <section> (which is
+// `relative`), behind the hero copy. Decorative only → aria-hidden,
+// so the real heading/subhead text remains the SEO content.
+//
+// `config` is the resolved settings.home_background_media object:
+//   { enabled, media_type, desktop, mobile, video, overlay_color,
+//     overlay_opacity, position, size }
+// This component assumes config.enabled is already true (callers gate on it).
+//
+// Responsiveness & performance:
+//   • Picks the mobile slot on narrow viewports, desktop otherwise — so a
+//     phone never downloads the heavy desktop video.
+//   • Honours prefers-reduced-motion and never autoplays video on mobile:
+//     in those cases it shows the poster (or image) instead.
+//   • Video is muted + playsInline + preload="metadata" with a poster, so
+//     there's no layout shift and iOS allows inline autoplay.
+// ============================================================
+
+const BG_POSITION = { center: 'center', top: 'top', bottom: 'bottom', left: 'left', right: 'right' };
+
+export function HeroBackground({ config }) {
+  // Track viewport (mobile <768px) and reduced-motion, reactively.
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false,
+  );
+  const [reducedMotion, setReducedMotion] = useState(
+    typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false,
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const mqMobile = window.matchMedia('(max-width: 767px)');
+    const mqMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onMobile = (e) => setIsMobile(e.matches);
+    const onMotion = (e) => setReducedMotion(e.matches);
+    mqMobile.addEventListener('change', onMobile);
+    mqMotion.addEventListener('change', onMotion);
+    // Sync once in case state was initialised server-side / before mount.
+    setIsMobile(mqMobile.matches);
+    setReducedMotion(mqMotion.matches);
+    return () => {
+      mqMobile.removeEventListener('change', onMobile);
+      mqMotion.removeEventListener('change', onMotion);
+    };
+  }, []);
+
+  if (!config || !config.enabled) return null;
+
+  const slotFor = (which) => config[which] || {};
+  const hasMedia = (s) => s.image_url || s.video_url;
+  // Prefer the viewport-matched slot; fall back to the other if it's empty so a
+  // desktop-only or mobile-only upload still shows everywhere.
+  const primary = isMobile ? slotFor('mobile') : slotFor('desktop');
+  const fallback = isMobile ? slotFor('desktop') : slotFor('mobile');
+  const slot = hasMedia(primary) ? primary : (hasMedia(fallback) ? fallback : primary);
+
+  const objectPosition = BG_POSITION[config.position] || 'center';
+  const objectFit = config.size === 'contain' ? 'contain' : 'cover';
+  const v = config.video || {};
+  const wantVideo = config.media_type === 'video' && !!slot.video_url;
+  // Guardrail: never autoplay on mobile or under reduced-motion; also respect
+  // the admin's autoplay toggle. When we can't play, show the poster/image.
+  const canPlayVideo = wantVideo && v.autoplay !== false && !isMobile && !reducedMotion;
+
+  const imageUrl = resolveImageUrl(slot.image_url, isMobile ? 900 : 2000);
+  const posterUrl = resolveImageUrl(slot.poster_url, isMobile ? 900 : 2000);
+  const videoUrl = resolveVideoUrl(slot.video_url);
+
+  let media = null;
+  if (canPlayVideo && videoUrl) {
+    media = (
+      <video
+        className="absolute inset-0 w-full h-full"
+        style={{ objectFit, objectPosition }}
+        src={videoUrl}
+        poster={posterUrl || undefined}
+        autoPlay
+        muted={v.muted !== false}
+        loop={v.loop !== false}
+        playsInline={v.playsinline !== false}
+        preload="metadata"
+        aria-hidden="true"
+      />
+    );
+  } else {
+    // Not playing a video → show the best available still: poster, then image,
+    // then (last resort for a video-only slot) a non-autoplaying video frame.
+    const stillUrl = posterUrl || imageUrl;
+    if (stillUrl) {
+      media = (
+        <img
+          className="absolute inset-0 w-full h-full"
+          style={{ objectFit, objectPosition }}
+          src={stillUrl}
+          alt=""
+          aria-hidden="true"
+          // Hero background is the LCP element — load it eagerly, high priority.
+          loading="eager"
+          fetchPriority="high"
+          decoding="async"
+        />
+      );
+    } else if (videoUrl) {
+      media = (
+        <video
+          className="absolute inset-0 w-full h-full"
+          style={{ objectFit, objectPosition }}
+          src={videoUrl}
+          muted
+          playsInline
+          preload="metadata"
+          aria-hidden="true"
+        />
+      );
+    }
+  }
+
+  if (!media) return null;
+
+  return (
+    <>
+      {media}
+      <div
+        className="absolute inset-0"
+        aria-hidden="true"
+        style={{
+          backgroundColor: config.overlay_color || '#1a0a0e',
+          opacity: typeof config.overlay_opacity === 'number' ? config.overlay_opacity : 0.45,
+        }}
+      />
+    </>
+  );
 }
 
 // ============================================================
@@ -93,6 +233,96 @@ export function LanguageSwitcher() {
 // ============================================================
 // NAVBAR — responsive, auth-aware
 // ============================================================
+// ============================================================
+// TOP PROMOTIONAL BAR — full-width maroon strip above the navbar.
+// Content comes from admin-editable settings (free-delivery threshold +
+// support phone/WhatsApp). Compact on mobile (secondary items hide).
+// ============================================================
+export function TopPromoBar() {
+  const settings = useSettings();
+  const freeOver = settings?.free_delivery_over;
+  // Prefer a real admin-set number; fall back to the verified business number.
+  const phone = isRealPhone(settings?.support_phone) ? settings.support_phone : BUSINESS.telephone;
+  const waSource = isRealPhone(settings?.support_whatsapp) ? settings.support_whatsapp : BUSINESS.whatsapp;
+  const waDigits = waSource ? waSource.replace(/[^0-9]/g, '') : '';
+  const gold = { color: 'var(--lux-gold-soft)' };
+  return (
+    <div className="rl-promo-bar">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-1.5 flex items-center justify-center gap-x-5 gap-y-1 flex-wrap text-[11px] sm:text-xs font-medium">
+        <span className="inline-flex items-center gap-1.5">
+          <Truck className="w-3.5 h-3.5" style={gold} /> Free Shipping on Orders Above {freeOver ? formatCurrency(freeOver) : '₹1,999'}
+        </span>
+        <span className="hidden sm:inline-flex items-center gap-1.5">
+          <RotateCcw className="w-3.5 h-3.5" style={gold} /> Easy 7-Day Returns
+        </span>
+        <span className="hidden md:inline-flex items-center gap-1.5">
+          <ShieldCheck className="w-3.5 h-3.5" style={gold} /> 100% Authentic Handloom
+        </span>
+        {phone && (
+          <a href={`tel:${phone.replace(/\s+/g, '')}`} className="inline-flex items-center gap-1.5">
+            <Phone className="w-3.5 h-3.5" style={gold} /> {phone}
+          </a>
+        )}
+        {waDigits && (
+          <a href={`https://wa.me/${waDigits}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5">
+            <MessageCircle className="w-3.5 h-3.5" style={gold} /> Chat with Us
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// FOOTER TRUST STRIP — burgundy band of brand-promise columns, rendered
+// at the top of the footer. Purely decorative copy; no links removed.
+// ============================================================
+export function FooterTrustStrip() {
+  const items = [
+    { icon: Award, title: 'Authentic Weaves', sub: "From India's Finest Looms" },
+    { icon: Gem, title: 'Premium Quality', sub: 'Handpicked Fabrics' },
+    { icon: Sparkles, title: 'Classic to Contemporary', sub: 'Styles for Every Occasion' },
+    { icon: Heart, title: 'Trusted by Customers', sub: '10,000+ Happy Customers' },
+  ];
+  return (
+    <div className="rl-trust-strip">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 grid grid-cols-2 lg:grid-cols-4 gap-5">
+        {items.map((it, i) => (
+          <div key={i} className="flex items-center gap-3 justify-center lg:justify-start text-center lg:text-left">
+            <it.icon className="w-6 h-6 shrink-0" style={{ color: 'var(--lux-gold-soft)' }} />
+            <div>
+              <div className="text-xs sm:text-sm font-bold">{it.title}</div>
+              <div className="text-[10px] sm:text-[11px] opacity-80">{it.sub}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Center-nav dropdown (Shop / Collections). Click to toggle; the parent
+// Navbar closes it on outside-click and on navigation.
+function NavDropdown({ label, open, onToggle, items, onNavigate }) {
+  return (
+    <div className="relative">
+      <button onClick={onToggle} className="luxury-nav-tab inline-flex items-center gap-1" aria-expanded={open}>
+        {label} <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="rl-nav-dropdown absolute left-0 top-full mt-1 w-56 rounded-xl py-2 z-50 max-h-80 overflow-auto">
+          {items.map((it, i) => (
+            <button key={i} onClick={() => onNavigate(it.route, it.params || null)}
+              className="w-full text-left px-4 py-2 text-sm text-stone-700 hover:bg-amber-100/60 transition">
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Navbar({ currentPage, onNavigate }) {
   const { t } = useTranslation();
   const { itemCount } = useCart();
@@ -100,6 +330,10 @@ export function Navbar({ currentPage, onNavigate }) {
   const settings = useSettings();
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  // Center-nav dropdowns (Shop / Collections) populated from real categories.
+  const [navMenu, setNavMenu] = useState(null); // 'shop' | 'collections' | null
+  const [cats, setCats] = useState([]);
+  const navMenuRef = useRef(null);
   // Global search: a slide-down bar beneath the navbar, reachable from every
   // page. Submitting routes to the shop pre-filtered via ?q=.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -132,10 +366,19 @@ export function Navbar({ currentPage, onNavigate }) {
       ) {
         setSearchOpen(false);
       }
+      // Close any open center-nav dropdown on an outside click.
+      if (navMenu && !navMenuRef.current?.contains(e.target)) setNavMenu(null);
     };
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
-  }, [menuOpen, searchOpen]);
+  }, [menuOpen, searchOpen, navMenu]);
+
+  // Categories feed the Shop dropdown; fetched once per navbar mount.
+  useEffect(() => {
+    let active = true;
+    api.getCategories().then((r) => { if (active) setCats(r.data || []); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   // Focus the field as soon as the bar opens so the user can type immediately.
   useEffect(() => { if (searchOpen) searchInputRef.current?.focus(); }, [searchOpen]);
@@ -143,14 +386,24 @@ export function Navbar({ currentPage, onNavigate }) {
   const submitSearch = (e) => {
     e.preventDefault();
     const q = searchTerm.trim();
+    if (q) trackSearch(q);
     setSearchOpen(false);
     onNavigate('products', q ? { q } : null);
   };
 
-  const navLinks = [
-    { id: 'home', label: t('nav.home') },
-    { id: 'products', label: t('nav.shop') },
+  // Shop dropdown = all products + real categories. Collections = curated
+  // occasion edits (link to the shop; no invented data model).
+  const shopItems = [
+    { label: t('products.allVegetables'), route: 'products' },
+    ...cats.map((c) => ({ label: c.name, route: 'products', params: { category: c.id } })),
   ];
+  const collectionItems = [
+    { label: 'Wedding Edit', route: 'products' },
+    { label: 'Festive Collection', route: 'products' },
+    { label: 'Party Wear', route: 'products' },
+    { label: 'Everyday Elegance', route: 'products' },
+  ];
+  const goNav = (r, p) => { setNavMenu(null); setMenuOpen(false); onNavigate(r, p); };
 
   return (
     <header className="luxury-navbar sticky top-0 z-40">
@@ -180,13 +433,15 @@ export function Navbar({ currentPage, onNavigate }) {
           </div>
         </button>
 
-        <nav className="hidden md:flex items-center gap-1">
-          {navLinks.map(link => (
-            <button key={link.id} onClick={() => onNavigate(link.id)}
-              className={`luxury-nav-tab ${currentPage === link.id ? 'is-active' : ''}`}>
-              {link.label}
-            </button>
-          ))}
+        <nav ref={navMenuRef} className="hidden md:flex items-center gap-0.5">
+          <button onClick={() => onNavigate('home')} className={`luxury-nav-tab ${currentPage === 'home' ? 'is-active' : ''}`}>{t('nav.home')}</button>
+          <NavDropdown label={t('nav.shop')} open={navMenu === 'shop'}
+            onToggle={() => setNavMenu((m) => (m === 'shop' ? null : 'shop'))} items={shopItems} onNavigate={goNav} />
+          <NavDropdown label="Collections" open={navMenu === 'collections'}
+            onToggle={() => setNavMenu((m) => (m === 'collections' ? null : 'collections'))} items={collectionItems} onNavigate={goNav} />
+          <button onClick={() => onNavigate('products')} className="luxury-nav-tab">New Arrivals</button>
+          <button onClick={() => onNavigate('products')} className="luxury-nav-tab">Best Sellers</button>
+          <button onClick={() => onNavigate('virtual-trial')} className={`luxury-nav-tab ${currentPage === 'virtual-trial' ? 'is-active' : ''}`}>Virtual Trial</button>
         </nav>
 
         <div className="flex items-center gap-1">
@@ -289,12 +544,11 @@ export function Navbar({ currentPage, onNavigate }) {
       {menuOpen && (
         <div ref={mobileMenuRef} className="luxury-mobile-menu md:hidden">
           <div className="px-4 py-3 flex flex-col gap-1">
-            {navLinks.map(link => (
-              <button key={link.id} onClick={() => { setMenuOpen(false); onNavigate(link.id); }}
-                className={`luxury-nav-tab text-left !rounded-lg ${currentPage === link.id ? 'is-active' : ''}`}>
-                {link.label}
-              </button>
-            ))}
+            <button onClick={() => goNav('home')} className={`luxury-nav-tab text-left !rounded-lg ${currentPage === 'home' ? 'is-active' : ''}`}>{t('nav.home')}</button>
+            <button onClick={() => goNav('products')} className="luxury-nav-tab text-left !rounded-lg">{t('nav.shop')}</button>
+            <button onClick={() => goNav('products')} className="luxury-nav-tab text-left !rounded-lg">New Arrivals</button>
+            <button onClick={() => goNav('products')} className="luxury-nav-tab text-left !rounded-lg">Best Sellers</button>
+            <button onClick={() => goNav('virtual-trial')} className={`luxury-nav-tab text-left !rounded-lg ${currentPage === 'virtual-trial' ? 'is-active' : ''}`}>Virtual Trial</button>
             {!isAuthenticated && (
               <>
                 <button onClick={() => { setMenuOpen(false); onNavigate('login'); }}
@@ -327,6 +581,7 @@ export function Footer({ onNavigate }) {
 
   return (
     <footer className="bg-stone-900 text-stone-300 mt-16">
+      <FooterTrustStrip />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 grid grid-cols-2 md:grid-cols-4 gap-8">
         <div className="col-span-2 md:col-span-1">
           <div className="flex items-center gap-2 mb-3">
@@ -875,7 +1130,7 @@ export function ShareMenu({ product, className = '' }) {
 // ============================================================
 // PRODUCT CARD
 // ============================================================
-export function ProductCard({ product, onClick, onAdd }) {
+export function ProductCard({ product, onClick, onAdd, badge }) {
   const { t } = useTranslation();
   const { isAuthenticated } = useAuth();
   const wishlist = useWishlist();
@@ -896,6 +1151,19 @@ export function ProductCard({ product, onClick, onAdd }) {
     <div onClick={onClick} className="luxury-card group bg-white rounded-2xl cursor-pointer overflow-hidden">
       <div className="luxury-card-image relative aspect-[3/4] bg-gradient-to-br from-amber-50 via-rose-50 to-amber-100 flex items-center justify-center text-7xl">
         <ProductImage src={product.image} alt={product.name} className="absolute inset-0 w-full h-full object-cover" />
+        {/* Optional corner ribbon driven by homepage carousels — "New" (green,
+            bottom-left) or "Bestseller" (gold, bottom-left). Decorative; the
+            real discount/premium badges above are unaffected. */}
+        {badge === 'New' && (
+          <span className="absolute bottom-3 left-3 text-white text-[10px] font-bold px-2 py-1 rounded-md shadow" style={{ background: 'linear-gradient(135deg, #2f9e6f 0%, #1f7a53 100%)' }}>
+            New
+          </span>
+        )}
+        {badge === 'Bestseller' && (
+          <span className="absolute bottom-3 left-3 text-[#4a0f1a] text-[10px] font-bold px-2 py-1 rounded-md shadow" style={{ background: 'linear-gradient(135deg, #f5e8c7 0%, #e0b04a 100%)' }}>
+            Bestseller
+          </span>
+        )}
         {product.isOrganic && (
           // Repurposed as the "Premium / Heritage" tag for sarees & lehengas
           // (locale key `products.organic` now renders "PREMIUM").

@@ -1,12 +1,15 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { AuthProvider, CartProvider, WishlistProvider, ToastProvider, SettingsProvider, ThemeProvider, SuggestionsProvider } from './contexts';
-import { Navbar, Footer, SupportWidget, AppDownloadBanner, PullToRefresh, FrequentlyBoughtModal } from './components';
+import { Navbar, Footer, TopPromoBar, SupportWidget, AppDownloadBanner, PullToRefresh, FrequentlyBoughtModal } from './components';
 import {
   HomePage, ProductListPage, ProductDetailsPage, CartPage,
   LoginPage, RegisterPage, OtpVerifyPage, ForgotPasswordPage, ResetOtpPage, ResetPasswordPage,
   ProfilePage, AddressesPage, CheckoutPage, OrderConfirmationPage,
   OrdersPage, OrderTrackingPage, WishlistPage, MyCreditPage, NotFoundPage,
 } from './pages';
+import { VirtualTrialPage } from './home/VirtualTrialPage';
+import { LandingPage, LANDING_PAGES } from './seo/LandingPage';
+import { initAnalytics } from './seo/analytics';
 import { pathToRoute, routeToPath } from './router';
 
 // Admin portal is code-split: React.lazy defers loading the ~8.7k-line admin
@@ -33,6 +36,9 @@ const ROUTES = {
   'order-tracking': OrderTrackingPage,
   'credit': MyCreditPage,
   'wishlist': WishlistPage,
+  'virtual-trial': VirtualTrialPage,
+  // Local SEO landing pages — each renders the shared LandingPage with its config.
+  ...Object.fromEntries(LANDING_PAGES.map((c) => [c.name, (props) => <LandingPage config={c} {...props} />])),
 };
 
 const isAdminRoute = (name) => name?.startsWith('admin-');
@@ -51,6 +57,9 @@ function readInitialRoute() {
 
 export default function App() {
   const [route, setRoute] = useState(readInitialRoute);
+
+  // GA4 — no-op unless VITE_GA4_ID is configured.
+  useEffect(() => { initAnalytics(); }, []);
 
   // Browser back/forward changes the URL without us calling navigate(). Keep
   // the React state in sync by listening for popstate.
@@ -131,6 +140,7 @@ export default function App() {
                     slide up/down for a frame, which reads as a "shake". */}
                 <div className="font-sans flex flex-col text-stone-900 dark:text-slate-100">
                   <PullToRefresh />
+                  <TopPromoBar />
                   <Navbar currentPage={route.name} onNavigate={navigate} />
                   <main className="flex-1 min-h-screen">
                     <PageComponent params={route.params} onNavigate={navigate} />

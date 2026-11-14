@@ -17,15 +17,15 @@ import {
   FileSpreadsheet, FileText, Loader2, ImagePlus, ClipboardList,
   Building2, Truck, Headphones, Palette, ClipboardCheck, BadgeCheck,
   RotateCcw, Clock, Zap, Megaphone, Heading, AlignLeft, Image as ImageIcon,
-  Sparkles, Globe, Camera,
+  Sparkles, Globe, Camera, Monitor, Smartphone, Film, Upload, Eye,
 } from 'lucide-react';
 import { adminApi, ADMIN_AUTH_KEY, api } from './api';
-import { Field, TextInput, SelectInput, ProductImage } from './components';
+import { Field, TextInput, SelectInput, ProductImage, HeroBackground } from './components';
 import {
   useToast, useTheme, useSettings, THEMES, CANCEL_CUTOFF_OPTIONS,
   DEFAULT_PRODUCT_DETAIL_BADGES, DEFAULT_HOME_HERO_FEATURES,
 } from './contexts';
-import { resolveImageUrl } from './api';
+import { resolveImageUrl, resolveVideoUrl } from './api';
 
 // ============================================================
 // AUTH CONTEXT — admin-specific, isolated from customer AuthContext
@@ -5491,6 +5491,24 @@ const SETTINGS_SECTIONS = [
     },
   },
   {
+    id: 'background_media',
+    title: 'Homepage Background',
+    blurb: 'Upload, preview, and publish an image or video background for the homepage hero — desktop and mobile independently.',
+    icon: ImageIcon,
+    color: 'fuchsia',
+    // Self-contained manager fetches its own state, so the tile summary is
+    // static (the shared settings `data` doesn't carry background media).
+    summary: () => 'Image / video hero',
+  },
+  {
+    id: 'virtual_trial',
+    title: 'Virtual Trial Room',
+    blurb: 'Turn the AI try-on feature on or off. When off, the storefront shows a "Coming Soon" page.',
+    icon: Camera,
+    color: 'violet',
+    summary: (d) => (d?.virtual_trial?.enabled === false ? 'Off · Coming Soon' : 'On'),
+  },
+  {
     id: 'price_filter',
     title: 'Shop price filter',
     blurb: 'Upper bound of the "Max price" slider on the storefront shop page',
@@ -7601,6 +7619,577 @@ function AdminB2BCustomersPage() {
   );
 }
 
+// ============================================================
+// HOMEPAGE BACKGROUND MANAGER (Settings → Homepage Background)
+// Self-contained draft→publish editor for the hero background media.
+// Manages its own fetch/save lifecycle via adminApi.*BackgroundMedia*,
+// independent of the shared settings form. Supports image OR video,
+// desktop + mobile independently, overlay/position/size, optional
+// scheduling, live preview, and media cleanup on the server.
+// ============================================================
+const freshSlot = () => ({
+  image_url: '', video_url: '', poster_url: '',
+  image_file_id: '', video_file_id: '', poster_file_id: '',
+});
+const freshBgConfig = () => ({
+  enabled: false,
+  media_type: 'image',
+  desktop: freshSlot(),
+  mobile: freshSlot(),
+  video: { autoplay: true, loop: true, muted: true, playsinline: true },
+  overlay_color: '#1a0a0e',
+  overlay_opacity: 0.45,
+  position: 'center',
+  size: 'cover',
+  schedule_start: null,
+  schedule_end: null,
+});
+function mergeBgConfig(src) {
+  const d = freshBgConfig();
+  if (!src || typeof src !== 'object') return d;
+  return {
+    ...d, ...src,
+    desktop: { ...d.desktop, ...(src.desktop || {}) },
+    mobile: { ...d.mobile, ...(src.mobile || {}) },
+    video: { ...d.video, ...(src.video || {}) },
+  };
+}
+const isoToLocalInput = (iso) => {
+  if (!iso) return '';
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}T${p(dt.getHours())}:${p(dt.getMinutes())}`;
+};
+const localInputToIso = (val) => {
+  if (!val) return null;
+  const dt = new Date(val);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+};
+function validateBgConfig(c) {
+  const msgs = [];
+  if (c.media_type === 'video') {
+    if (c.desktop.video_url && !c.desktop.poster_url) msgs.push('Desktop video needs a poster image (shown on mobile and when motion is reduced).');
+    if (c.mobile.video_url && !c.mobile.poster_url) msgs.push('Mobile video needs a poster image.');
+    if (!c.desktop.video_url && !c.mobile.video_url && !c.desktop.image_url && !c.mobile.image_url) {
+      msgs.push('Upload at least one video before publishing.');
+    }
+  } else if (!c.desktop.image_url && !c.mobile.image_url) {
+    msgs.push('Upload at least one image before publishing.');
+  }
+  return msgs;
+}
+
+// Small switch control used for the master enable + video flags.
+function BgToggle({ label, hint, checked, onChange, disabled }) {
+  return (
+    <label className={`flex items-start justify-between gap-3 py-2 ${disabled ? 'opacity-60' : 'cursor-pointer'}`}>
+      <span>
+        <span className="block text-sm font-medium text-slate-800 dark:text-slate-100">{label}</span>
+        {hint && <span className="block text-xs text-slate-500">{hint}</span>}
+      </span>
+      <span className="relative inline-flex shrink-0 mt-0.5">
+        <input type="checkbox" className="peer sr-only" checked={!!checked} disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)} />
+        <span className="w-10 h-6 rounded-full bg-slate-300 peer-checked:bg-emerald-500 transition-colors" />
+        <span className="absolute left-0.5 top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+      </span>
+    </label>
+  );
+}
+
+const BG_POSITIONS = ['center', 'top', 'bottom', 'left', 'right'];
+
+function BackgroundMediaManager({ canWrite, onBack }) {
+  const toast = useToast();
+  const [env, setEnv] = useState(null);
+  const [cfg, setCfg] = useState(freshBgConfig);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('desktop');
+  const [busy, setBusy] = useState('');          // field currently uploading, e.g. 'desktop.image'
+  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [preview, setPreview] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    adminApi.getBackgroundMedia()
+      .then((res) => {
+        if (!active) return;
+        setEnv(res.data);
+        setCfg(mergeBgConfig(res.data?.draft || res.data?.published || null));
+      })
+      .catch((e) => { if (active) toast.push(e.message || 'Could not load background settings', 'error'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const patch = (partial) => setCfg((c) => ({ ...c, ...partial }));
+  const patchSlot = (which, partial) => setCfg((c) => ({ ...c, [which]: { ...c[which], ...partial } }));
+  const patchVideo = (partial) => setCfg((c) => ({ ...c, video: { ...c.video, ...partial } }));
+  const slot = cfg[tab];
+
+  const uploadImage = async (which, field, file) => {
+    if (!file) return;
+    setBusy(`${which}.${field}`);
+    try {
+      const res = await adminApi.uploadHeroImage(file);
+      patchSlot(which, { [`${field}_url`]: res.data.url, [`${field}_file_id`]: res.data.public_id || '' });
+      toast.push('Image uploaded', 'success');
+    } catch (e) { toast.push(e.message || 'Upload failed', 'error'); }
+    finally { setBusy(''); }
+  };
+  const uploadVideo = async (which, file) => {
+    if (!file) return;
+    setBusy(`${which}.video`);
+    try {
+      const res = await adminApi.uploadHeroVideo(file);
+      patchSlot(which, { video_url: res.data.url, video_file_id: res.data.public_id || '' });
+      toast.push('Video uploaded', 'success');
+    } catch (e) { toast.push(e.message || 'Upload failed', 'error'); }
+    finally { setBusy(''); }
+  };
+
+  const saveDraft = async () => {
+    setSaving(true);
+    try {
+      const res = await adminApi.saveBackgroundMediaDraft(cfg);
+      setEnv(res.data);
+      toast.push('Draft saved — not live yet.', 'success');
+    } catch (e) { toast.push(e.message || 'Could not save draft', 'error'); }
+    finally { setSaving(false); }
+  };
+  const doPublish = async () => {
+    const msgs = validateBgConfig(cfg);
+    if (msgs.length) { toast.push(msgs[0], 'error'); setConfirmPublish(false); return; }
+    setPublishing(true);
+    try {
+      await adminApi.saveBackgroundMediaDraft(cfg); // persist latest edits first
+      const res = await adminApi.publishBackgroundMedia();
+      setEnv(res.data);
+      setConfirmPublish(false);
+      toast.push('Published — the homepage background is now live.', 'success');
+    } catch (e) { toast.push(e.message || 'Could not publish', 'error'); }
+    finally { setPublishing(false); }
+  };
+  const doRemove = async () => {
+    setRemoving(true);
+    try {
+      const res = await adminApi.removeBackgroundMedia();
+      setEnv(res.data);
+      setConfirmRemove(false);
+      toast.push('Background removed — homepage reverted to the default.', 'success');
+    } catch (e) { toast.push(e.message || 'Could not remove background', 'error'); }
+    finally { setRemoving(false); }
+  };
+
+  const warnings = validateBgConfig(cfg);
+  const publishedOn = env?.published?.enabled;
+  const inputCls = 'w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900';
+  const disabled = !canWrite;
+
+  // A reusable media upload row. Defined as a plain function returning JSX
+  // (NOT a nested component) so React doesn't remount the file input on every
+  // parent render — which would reset an in-flight picker.
+  const mediaUpload = ({ label, hint, accept, uploading, onFile, onClear, previewNode }) => (
+    <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-3">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span>
+        {onClear && (
+          <button type="button" onClick={onClear} disabled={disabled || uploading}
+            className="inline-flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 disabled:opacity-40">
+            <Trash2 className="w-3.5 h-3.5" /> Remove
+          </button>
+        )}
+      </div>
+      {previewNode}
+      <label className={`mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-xs font-semibold ${disabled || uploading ? 'opacity-50' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
+        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+        {uploading ? 'Uploading…' : (previewNode ? 'Replace' : 'Upload')}
+        <input type="file" accept={accept} className="hidden" disabled={disabled || uploading}
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFile(f); }} />
+      </label>
+      {hint && <p className="text-[11px] text-slate-500 mt-1.5">{hint}</p>}
+    </div>
+  );
+
+  return (
+    <div className="max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-4">
+        <button type="button" onClick={onBack}
+          className="inline-flex items-center gap-1 text-sm font-semibold text-slate-600 hover:text-slate-900 transition">
+          <ChevronLeft className="w-4 h-4" /> Settings
+        </button>
+        <span className="text-slate-300">/</span>
+        <span className="font-semibold text-slate-900 dark:text-slate-100">Homepage Background</span>
+      </div>
+
+      {loading ? (
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-8 animate-pulse">
+          <div className="h-4 bg-slate-100 rounded w-1/3 mb-3" />
+          <div className="h-40 bg-slate-100 rounded" />
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {!canWrite && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-2.5 rounded-xl text-sm">
+              Read-only — only Super/Operations roles can change the homepage background.
+            </div>
+          )}
+
+          {/* Active (published) status */}
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${publishedOn ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${publishedOn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                  {publishedOn ? 'Live on homepage' : 'Using default background'}
+                </span>
+                {env?.published?.media_type && publishedOn && (
+                  <span className="text-xs text-slate-500 inline-flex items-center gap-1">
+                    {env.published.media_type === 'video' ? <Film className="w-3.5 h-3.5" /> : <ImageIcon className="w-3.5 h-3.5" />}
+                    {env.published.media_type}
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-500 text-right">
+                {env?.published_at && <div>Published {new Date(env.published_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</div>}
+                {env?.draft_updated_at && <div>Draft saved {new Date(env.draft_updated_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</div>}
+              </div>
+            </div>
+          </div>
+
+          {/* Editor card */}
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 space-y-5">
+            <BgToggle label="Enable custom homepage background"
+              hint="Off = the homepage uses its default (legacy image, else the cinematic stage)."
+              checked={cfg.enabled} disabled={disabled} onChange={(v) => patch({ enabled: v })} />
+
+            {/* Media type */}
+            <div>
+              <div className="text-sm font-medium text-slate-800 dark:text-slate-100 mb-2">Media type</div>
+              <div className="inline-flex rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden">
+                {[['image', 'Image', ImageIcon], ['video', 'Video', Film]].map(([val, lbl, Icon]) => (
+                  <button key={val} type="button" disabled={disabled}
+                    onClick={() => patch({ media_type: val })}
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold transition ${cfg.media_type === val ? 'bg-slate-900 text-white' : 'bg-white dark:bg-slate-900 text-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700'} disabled:opacity-50`}>
+                    <Icon className="w-4 h-4" /> {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Desktop / Mobile tabs */}
+            <div>
+              <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700 mb-3">
+                {[['desktop', 'Desktop', Monitor], ['mobile', 'Mobile', Smartphone]].map(([val, lbl, Icon]) => (
+                  <button key={val} type="button" onClick={() => setTab(val)}
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold -mb-px border-b-2 transition ${tab === val ? 'border-slate-900 text-slate-900 dark:text-white dark:border-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                    <Icon className="w-4 h-4" /> {lbl}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                {cfg.media_type === 'image' ? (
+                  mediaUpload({
+                    label: `${tab === 'desktop' ? 'Desktop' : 'Mobile'} image`,
+                    accept: 'image/jpeg,image/png,image/webp',
+                    uploading: busy === `${tab}.image`,
+                    onFile: (f) => uploadImage(tab, 'image', f),
+                    onClear: slot.image_url ? () => patchSlot(tab, { image_url: '', image_file_id: '' }) : null,
+                    hint: 'JPG, PNG, or WebP · up to 8 MB. Delivered via CDN as optimized AVIF/WebP.',
+                    previewNode: slot.image_url && (
+                      <div className="rounded-lg overflow-hidden bg-slate-900 aspect-video">
+                        <img src={resolveImageUrl(slot.image_url, 800)} alt="" className="w-full h-full object-cover" />
+                      </div>
+                    ),
+                  })
+                ) : (
+                  <>
+                    {mediaUpload({
+                      label: `${tab === 'desktop' ? 'Desktop' : 'Mobile'} video`,
+                      accept: 'video/mp4,video/webm',
+                      uploading: busy === `${tab}.video`,
+                      onFile: (f) => uploadVideo(tab, f),
+                      onClear: slot.video_url ? () => patchSlot(tab, { video_url: '', video_file_id: '' }) : null,
+                      hint: 'MP4 or WebM · up to 40 MB. Keep it short & compressed to stay within bandwidth.',
+                      previewNode: slot.video_url && (
+                        <video src={resolveVideoUrl(slot.video_url)} className="rounded-lg w-full aspect-video object-cover bg-slate-900"
+                          muted loop playsInline autoPlay />
+                      ),
+                    })}
+                    {mediaUpload({
+                      label: `${tab === 'desktop' ? 'Desktop' : 'Mobile'} poster (fallback)`,
+                      accept: 'image/jpeg,image/png,image/webp',
+                      uploading: busy === `${tab}.poster`,
+                      onFile: (f) => uploadImage(tab, 'poster', f),
+                      onClear: slot.poster_url ? () => patchSlot(tab, { poster_url: '', poster_file_id: '' }) : null,
+                      hint: 'Shown on mobile, on slow connections, and when the viewer prefers reduced motion. Required for video.',
+                      previewNode: slot.poster_url && (
+                        <div className="rounded-lg overflow-hidden bg-slate-900 aspect-video">
+                          <img src={resolveImageUrl(slot.poster_url, 800)} alt="" className="w-full h-full object-cover" />
+                        </div>
+                      ),
+                    })}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Display settings */}
+            <div className="grid sm:grid-cols-2 gap-4 pt-1">
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">Position</span>
+                <select className={inputCls} value={cfg.position} disabled={disabled}
+                  onChange={(e) => patch({ position: e.target.value })}>
+                  {BG_POSITIONS.map((p) => <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">Size</span>
+                <select className={inputCls} value={cfg.size} disabled={disabled}
+                  onChange={(e) => patch({ size: e.target.value })}>
+                  <option value="cover">Cover (fill, may crop)</option>
+                  <option value="contain">Contain (fit, no crop)</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">Overlay color</span>
+                <div className="flex items-center gap-2">
+                  <input type="color" value={cfg.overlay_color} disabled={disabled}
+                    onChange={(e) => patch({ overlay_color: e.target.value })}
+                    className="w-10 h-9 rounded border border-slate-300 dark:border-slate-600 bg-white" />
+                  <input type="text" value={cfg.overlay_color} disabled={disabled}
+                    onChange={(e) => patch({ overlay_color: e.target.value })}
+                    className={inputCls} placeholder="#1a0a0e" />
+                </div>
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">
+                  Overlay opacity · {Math.round(cfg.overlay_opacity * 100)}%
+                </span>
+                <input type="range" min="0" max="1" step="0.05" value={cfg.overlay_opacity} disabled={disabled}
+                  onChange={(e) => patch({ overlay_opacity: Number(e.target.value) })}
+                  className="w-full mt-2 accent-slate-900" />
+                <span className="block text-[11px] text-slate-500">Darkens the media so the hero text stays readable.</span>
+              </label>
+            </div>
+
+            {/* Video playback flags */}
+            {cfg.media_type === 'video' && (
+              <div className="rounded-lg bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 p-3">
+                <div className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Video playback</div>
+                <div className="grid sm:grid-cols-2 gap-x-6">
+                  <BgToggle label="Autoplay" checked={cfg.video.autoplay} disabled={disabled} onChange={(v) => patchVideo({ autoplay: v })} />
+                  <BgToggle label="Loop" checked={cfg.video.loop} disabled={disabled} onChange={(v) => patchVideo({ loop: v })} />
+                  <BgToggle label="Muted" hint="Browsers require muted for autoplay." checked={cfg.video.muted} disabled={disabled} onChange={(v) => patchVideo({ muted: v })} />
+                  <BgToggle label="Play inline" hint="Needed for iOS." checked={cfg.video.playsinline} disabled={disabled} onChange={(v) => patchVideo({ playsinline: v })} />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">Autoplay is always suppressed on mobile and when the viewer prefers reduced motion — the poster shows instead.</p>
+              </div>
+            )}
+
+            {/* Schedule (optional) */}
+            <div className="grid sm:grid-cols-2 gap-4">
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">Schedule start <span className="text-slate-400 font-normal">(optional)</span></span>
+                <input type="datetime-local" className={inputCls} disabled={disabled}
+                  value={isoToLocalInput(cfg.schedule_start)}
+                  onChange={(e) => patch({ schedule_start: localInputToIso(e.target.value) })} />
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">Schedule end <span className="text-slate-400 font-normal">(optional)</span></span>
+                <input type="datetime-local" className={inputCls} disabled={disabled}
+                  value={isoToLocalInput(cfg.schedule_end)}
+                  onChange={(e) => patch({ schedule_end: localInputToIso(e.target.value) })} />
+              </label>
+              <p className="text-[11px] text-slate-500 sm:col-span-2 -mt-2">Outside this window the homepage falls back to the default background. Leave blank to show it indefinitely once published.</p>
+            </div>
+
+            {warnings.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-2.5 rounded-xl text-xs space-y-1">
+                {warnings.map((w, i) => <div key={i} className="flex gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {w}</div>)}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+              <button type="button" onClick={() => setPreview(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-700">
+                <Eye className="w-4 h-4" /> Preview
+              </button>
+              <div className="flex-1" />
+              <button type="button" onClick={saveDraft} disabled={disabled || saving}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Draft
+              </button>
+              <button type="button" onClick={() => setConfirmPublish(true)} disabled={disabled || publishing}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold disabled:opacity-50">
+                {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Publish
+              </button>
+            </div>
+            {publishedOn && (
+              <button type="button" onClick={() => setConfirmRemove(true)} disabled={disabled || removing}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 disabled:opacity-50">
+                <Trash2 className="w-3.5 h-3.5" /> Remove background from homepage
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Preview modal */}
+      {preview && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={() => setPreview(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden max-w-4xl w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+              <span className="font-semibold text-slate-900 dark:text-slate-100 text-sm">Preview (draft) — resize the window to see the mobile source</span>
+              <button type="button" onClick={() => setPreview(false)} className="text-slate-500 hover:text-slate-800"><X className="w-5 h-5" /></button>
+            </div>
+            {/* Mimics the storefront hero stage so overlay/readability can be judged. */}
+            <section className="relative overflow-hidden bg-stone-900 min-h-[360px] flex items-center justify-center text-center">
+              <HeroBackground config={{ ...cfg, enabled: true }} />
+              <div className="relative px-6 py-20">
+                <span className="inline-block bg-white/10 border border-amber-300/40 px-4 py-1 rounded-full text-[11px] uppercase tracking-widest text-amber-100 mb-6">Free shipping on orders above ₹999</span>
+                <h1 className="font-serif text-4xl sm:text-5xl font-semibold text-amber-50 leading-tight">Style that turns heads,<br /><span className="italic text-amber-300">delivered to your door.</span></h1>
+                <p className="mt-4 text-amber-50/80 max-w-lg mx-auto text-sm">Hand-picked drops from emerging Indian labels and trusted classics.</p>
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+
+      {/* Publish confirm */}
+      {confirmPublish && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => setConfirmPublish(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-1">Publish background?</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">This replaces the live homepage background immediately for all visitors.</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmPublish(false)} className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-semibold">Cancel</button>
+              <button type="button" onClick={doPublish} disabled={publishing}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold disabled:opacity-50">
+                {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Publish now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove confirm */}
+      {confirmRemove && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" onClick={() => setConfirmRemove(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-1">Remove background?</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">The homepage reverts to its default background. Your draft is kept, so you can re-publish later.</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmRemove(false)} className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-semibold">Cancel</button>
+              <button type="button" onClick={doRemove} disabled={removing}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold disabled:opacity-50">
+                {removing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// VIRTUAL TRIAL ROOM SETTINGS — simple on/off (+ retention) for the AI try-on.
+// Off makes the storefront /virtual-trial page show a "Coming Soon" message.
+// Self-contained (own fetch/save), uses the dedicated /settings/virtual-trial
+// endpoint so it never touches the big settings form.
+// ============================================================
+function VirtualTrialSettings({ canWrite, onBack }) {
+  const toast = useToast();
+  const [cfg, setCfg] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const disabled = !canWrite;
+
+  useEffect(() => {
+    adminApi.getSettings()
+      .then((r) => setCfg(r.data.virtual_trial || { enabled: true, retention_minutes: 30, categories: [] }))
+      .catch((e) => toast.push(e.message || 'Could not load settings', 'error'))
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await adminApi.updateVirtualTrial({ enabled: cfg.enabled, retention_minutes: cfg.retention_minutes });
+      setCfg(r.data);
+      toast.push(r.data?.enabled ? 'Virtual Trial Room is now ON.' : 'Virtual Trial Room is OFF — storefront shows “Coming Soon”.', 'success');
+    } catch (e) { toast.push(e.message || 'Could not save', 'error'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="max-w-2xl">
+      <div className="flex items-center gap-3 mb-4">
+        <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-semibold text-slate-600 hover:text-slate-900 transition">
+          <ChevronLeft className="w-4 h-4" /> Settings
+        </button>
+        <span className="text-slate-300">/</span>
+        <span className="font-semibold text-slate-900 dark:text-slate-100">Virtual Trial Room</span>
+      </div>
+
+      {loading || !cfg ? (
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-8 animate-pulse">
+          <div className="h-4 bg-slate-100 rounded w-1/3 mb-3" /><div className="h-10 bg-slate-100 rounded w-1/2" />
+        </div>
+      ) : (
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 space-y-5">
+          {!canWrite && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-2.5 rounded-xl text-sm">
+              Read-only — only Super/Operations roles can change this.
+            </div>
+          )}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">AI Virtual Trial Room</div>
+              <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                When ON, customers can use the try-on experience at <code>/virtual-trial</code>. When OFF, that page shows a “Coming Soon” message instead.
+              </p>
+            </div>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${cfg.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${cfg.enabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              {cfg.enabled ? 'On' : 'Off · Coming Soon'}
+            </span>
+          </div>
+
+          <BgToggle label="Enable Virtual Trial Room"
+            hint="Off shows a “Coming Soon” page on the storefront."
+            checked={cfg.enabled} disabled={disabled || saving}
+            onChange={(v) => setCfg((c) => ({ ...c, enabled: v }))} />
+
+          <label className="block">
+            <span className="block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">Photo retention (minutes)</span>
+            <input type="number" min="1" max="1440" value={cfg.retention_minutes} disabled={disabled}
+              onChange={(e) => setCfg((c) => ({ ...c, retention_minutes: Math.max(1, Math.min(1440, Number(e.target.value) || 30)) }))}
+              className="w-40 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900" />
+            <span className="block text-[11px] text-slate-500 mt-1">How long a customer’s uploaded photo is kept on the server before auto-deletion.</span>
+          </label>
+
+          <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-700">
+            <button type="button" onClick={save} disabled={disabled || saving}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold disabled:opacity-50">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminSettingsPage({ route, navigate }) {
   const auth = useAdminAuth();
   const toast = useToast();
@@ -8069,6 +8658,12 @@ function AdminSettingsPage({ route, navigate }) {
             </div>
           )}
         </div>
+      ) : activeSection === 'background_media' ? (
+        // Self-contained manager — its own fetch/draft/publish lifecycle, kept
+        // out of the shared settings form so the big dirty-check stays simple.
+        <BackgroundMediaManager canWrite={canWrite} onBack={closeSection} />
+      ) : activeSection === 'virtual_trial' ? (
+        <VirtualTrialSettings canWrite={canWrite} onBack={closeSection} />
       ) : (
         <form onSubmit={onSubmit} className={`bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 space-y-5 ${activeSection === 'frequently_bought' ? 'max-w-3xl' : 'max-w-2xl'}`}>
           {/* Back-to-tiles header. Title pulls from SETTINGS_SECTIONS so it

@@ -451,6 +451,10 @@ const DEFAULT_SETTINGS = {
   company_address: null,
   product_detail_badges: DEFAULT_PRODUCT_DETAIL_BADGES,
   home_hero_features: DEFAULT_HOME_HERO_FEATURES,
+  // Homepage Background manager — effective (published + in-schedule) config
+  // resolved server-side. { enabled: false } = use the legacy
+  // home_hero_features.background_image fallback, then the cinematic default.
+  home_background_media: { enabled: false },
   // Resolved cap for the storefront "Max price" slider. The backend swaps
   // this for MAX(price) of Active products when admin has auto-mode on.
   // Default ₹2999 covers the seed catalog headroom (priciest item is the

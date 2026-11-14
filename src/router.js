@@ -12,6 +12,8 @@
 // though the regex anchors ($) keep them disjoint regardless. Same for
 // '/orders' vs '/orders/:orderId'.
 
+import { LANDING_PAGES } from './seo/landingRoutes';
+
 const ROUTES = [
   ['home',                '/',                              [],            []],
   ['products',            '/products',                      [],            ['category', 'q']],
@@ -34,6 +36,9 @@ const ROUTES = [
   ['order-tracking',      '/orders/:orderId',               ['orderId'],   []],
   ['credit',              '/account/credit',                [],            []],
   ['wishlist',            '/wishlist',                      [],            []],
+  ['virtual-trial',       '/virtual-trial',                 [],            []],
+  // Local SEO landing pages (data-driven; see seo/landingRoutes.js).
+  ...LANDING_PAGES.map((c) => [c.name, c.path, [], []]),
 
   // Admin portal
   ['admin-login',         '/admin/login',                   [],            []],

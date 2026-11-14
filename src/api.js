@@ -53,6 +53,18 @@ export function resolveImageUrl(src, width) {
   return null;
 }
 
+// Video/media URL resolver that, unlike resolveImageUrl, NEVER injects an
+// ImageKit `?tr=f-auto,...` image transform (those are image-only and corrupt
+// a video URL). Absolute URLs pass straight through; local /uploads paths get
+// the API host prefix. Used by the hero background video element.
+export function resolveVideoUrl(src) {
+  if (!src || typeof src !== 'string') return null;
+  if (src.startsWith('http://') || src.startsWith('https://')) return src;
+  if (src.startsWith('data:')) return src;
+  if (src.startsWith('/uploads/')) return API_HOST ? `${API_HOST}${src}` : null;
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Client-side image compression
 // ---------------------------------------------------------------------------
@@ -667,6 +679,13 @@ export const api = {
   getProducts: () => apiCall('/products'),
   getProduct: (id) => apiCall(`/products/${id}`),
   getCategories: () => apiCall('/categories'),
+  // Best sellers for the homepage carousel — most-ordered Active products
+  // (backend aggregates order history, falls back to top-discount). In mock
+  // mode there's no such endpoint, so reuse the product list.
+  getBestSellers: (limit = 10) => {
+    if (USE_MOCK) return apiCall('/products').then((r) => ({ data: (r.data || []).slice(0, limit) }));
+    return apiCall(`/products/best-sellers?limit=${limit}`);
+  },
   // Operational thresholds the cart/checkout previews — admin-editable.
   getSettings: () => apiCall('/settings'),
 
@@ -788,6 +807,61 @@ export const api = {
   submitReview: (productId, rating, comment) =>
     put(`/products/${productId}/reviews`, { rating, comment }),
   deleteMyReview: (productId) => del(`/products/${productId}/reviews`),
+};
+
+// ------------------------------------------------------------
+// Virtual Trial Room API — guest-friendly; a session is keyed by the opaque
+// sessionId returned from upload-photo and passed back via the x-vton-session
+// header. Photo upload is multipart; the generated result is image bytes (or a
+// JSON placeholder when no AI provider is connected). Backend-only (real
+// endpoints); mock mode isn't supported for this feature.
+// ------------------------------------------------------------
+export const virtualTrial = {
+  getConfig: async () => {
+    const res = await fetch(`${API_BASE_URL}/virtual-trial/config`);
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'Could not load Virtual Trial config');
+    return j;
+  },
+  uploadPhoto: async (blob) => {
+    const form = new FormData();
+    form.append('photo', blob, 'photo.jpg');
+    const res = await fetch(`${API_BASE_URL}/virtual-trial/upload-photo`, { method: 'POST', body: form });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `Upload failed (${res.status})`);
+    return j.data; // { sessionId, photoId }
+  },
+  generate: async (sessionId, photoId, productId, variant) => {
+    const res = await fetch(`${API_BASE_URL}/virtual-trial/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-vton-session': sessionId },
+      body: JSON.stringify({ sessionId, photoId, productId, variant: variant || null }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `Generation failed (${res.status})`);
+    return j.data; // { jobId, status }
+  },
+  status: async (jobId, sessionId) => {
+    const res = await fetch(`${API_BASE_URL}/virtual-trial/status/${jobId}`, { headers: { 'x-vton-session': sessionId } });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'Status check failed');
+    return j.data;
+  },
+  result: async (jobId, sessionId) => {
+    const res = await fetch(`${API_BASE_URL}/virtual-trial/result/${jobId}`, { headers: { 'x-vton-session': sessionId } });
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Result not available');
+      return j.data || {}; // { placeholder: true }
+    }
+    if (!res.ok) throw new Error('Result not available');
+    const blob = await res.blob();
+    return { imageUrl: URL.createObjectURL(blob) };
+  },
+  deleteSession: async (sessionId) => {
+    try { await fetch(`${API_BASE_URL}/virtual-trial/session/${sessionId}`, { method: 'DELETE' }); } catch { /* best-effort */ }
+  },
 };
 
 // ------------------------------------------------------------
@@ -932,6 +1006,44 @@ export const adminApi = {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(json.error || `Image upload failed (${res.status})`);
+      err.code = res.status;
+      throw err;
+    }
+    return json;
+  },
+
+  // Home hero background VIDEO (MP4/WebM). No client-side compression — video
+  // isn't canvas-re-encodable in the browser; we just enforce the size cap up
+  // front so the user gets a clear message instead of a server 400 after a long
+  // upload. Returns { data: { url, public_id, size, mimetype } }; caller stores
+  // url + public_id into the Homepage Background config. Gated on 'settings'.
+  uploadHeroVideo: async (file) => {
+    const MAX_BYTES = 40 * 1024 * 1024;
+    if (!['video/mp4', 'video/webm'].includes(file.type)) {
+      throw new Error('Only MP4 or WebM videos are allowed.');
+    }
+    if (file.size > MAX_BYTES) {
+      throw new Error(`Video is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max 40 MB.`);
+    }
+    if (USE_MOCK) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ data: { url: reader.result, public_id: '', size: file.size, mimetype: file.type } });
+        reader.onerror = () => reject(new Error('Could not read the file'));
+        reader.readAsDataURL(file);
+      });
+    }
+    const token = readAdminToken();
+    const form = new FormData();
+    form.append('video', file);
+    const res = await fetch(`${API_BASE_URL}/admin/uploads/hero-video`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(json.error || `Video upload failed (${res.status})`);
       err.code = res.status;
       throw err;
     }
@@ -1164,6 +1276,19 @@ export const adminApi = {
   // both gated on the 'settings' permission.
   getSettings: () => adminCall('/settings'),
   updateSettings: (data) => adminPut('/settings', data),
+
+  // Homepage Background manager (Website Management → Homepage Background).
+  // Self-contained draft→publish workflow, independent of the big settings
+  // form above. All gated on the 'settings' permission server-side.
+  // getBackgroundMedia → { data: { published, draft, published_at, draft_updated_at } }
+  // Virtual Trial Room on/off + retention. Dedicated endpoint so a simple
+  // toggle doesn't require sending the whole settings payload.
+  updateVirtualTrial: (patch) => adminPut('/settings/virtual-trial', patch),
+
+  getBackgroundMedia: () => adminCall('/background-media'),
+  saveBackgroundMediaDraft: (config) => adminPut('/background-media/draft', { config }),
+  publishBackgroundMedia: () => adminPost('/background-media/publish', {}),
+  removeBackgroundMedia: () => adminDel('/background-media'),
 
   // Report exports — Excel + PDF for every record-bearing admin section.
   // resource ∈ orders | products | categories | coupons | customers |

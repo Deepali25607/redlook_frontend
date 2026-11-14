@@ -7,6 +7,12 @@ import {
 import { useTranslation } from 'react-i18next';
 import { api, resolveImageUrl } from './api';
 import { ProductCard, ProductImage, Field, TextInput, SelectInput, ShareMenu } from './components';
+import { HeroSlider } from './home/HeroSlider';
+import { CategoryArches, ServiceBenefits, WeddingWardrobe, VirtualTrialPromo, NewArrivals, BestSellers, VisitStore } from './home/sections';
+import { useSeo, useJsonLd } from './seo/useSeo';
+import { SEO, title as seoTitle, SITE_URL } from './seo/seoConfig';
+import { productLd, breadcrumbLd } from './seo/jsonld';
+import { trackViewItem, trackViewItemList, trackAddToCart } from './seo/analytics';
 import { useCart, useAuth, useWishlist, useToast, useSettings, useSuggestions, canCancelOrderClient, cartLineKey } from './contexts';
 import { formatCurrency, formatDateTime } from './lib/format';
 import { LuxuryBackground } from './LuxuryBackground';
@@ -264,457 +270,69 @@ export function HomePage({ onNavigate }) {
   const settings = useSettings();
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
-  // All eight home-hero entries are managed in one JSONB array via admin
-  // Settings → Product details → Home hero trust pills. The keys drive
-  // distinct render paths below.
+  const [bestSellers, setBestSellers] = useState([]);
+
+  // Admin-managed hero copy (existing home_hero_features JSONB) feeds the
+  // first slide; premium defaults fill in when a field is unset.
   const heroByKey = Object.fromEntries((settings.home_hero_features || []).map((f) => [f.key, f]));
-  const announcement = heroByKey.announcement;
   const headlineTop = heroByKey.headline_top;
   const headlineBottom = heroByKey.headline_bottom;
   const subheadline = heroByKey.subheadline;
-  const backgroundImage = heroByKey.background_image;
-  const trustPills = ['delivery', 'freshness', 'speed']
-    .map((k) => heroByKey[k])
-    .filter((f) => f?.enabled);
-  // Resolve the hero image so /uploads/… paths get the API host prefix, and
-  // skip it entirely when the toggle is off or the URL field is empty.
-  const heroBgUrl = backgroundImage?.enabled && backgroundImage?.title?.trim()
-    ? resolveImageUrl(backgroundImage.title.trim())
-    : null;
 
   useEffect(() => {
-    Promise.all([api.getProducts(), api.getCategories()])
-      .then(([p, c]) => {
-        setProducts(p.data.slice(0, 8));
-        setCategories(c.data);
-        setLoading(false);
-      });
+    Promise.all([api.getProducts(), api.getCategories(), api.getBestSellers(6)])
+      .then(([p, c, b]) => {
+        setProducts(p.data || []);
+        setCategories(c.data || []);
+        setBestSellers(b.data || []);
+      })
+      .catch(() => {});
   }, []);
 
-  // Re-run the reveal-up observer once data finishes loading — the
-  // section markup that depends on products/categories only exists
-  // after that paint, so we need a second pass.
-  useScrollReveal([loading]);
+  useSeo(SEO.home);
 
-  const onAdd = (p) => { addItem(p); toast.push(t('products.addedToCart', { name: p.name })); triggerSuggestions(p); };
+  const onAdd = (p) => { addItem(p); trackAddToCart(p); toast.push(t('products.addedToCart', { name: p.name })); triggerSuggestions(p); };
 
-  // Editor's Pick = the highest-priced item we've fetched (the bridal
-  // tier). Falls back to first product if pricing is uniform.
-  const editorsPick = (products.length
-    ? [...products].sort((a, b) => (b.price || 0) - (a.price || 0))[0]
-    : null);
+  // Hero slides: slide 1 pulls its image from the admin-managed Homepage
+  // Background (home_background_media) when enabled, then falls back to
+  // catalog product imagery, then a branded panel — never a stock URL.
+  const bgMedia = settings.home_background_media;
+  const bgImg = bgMedia?.enabled ? (bgMedia.desktop?.image_url || bgMedia.mobile?.image_url || '') : '';
+  const productImgs = products.filter((p) => resolveImageUrl(p.image)).map((p) => p.image);
+  const heroSlides = [
+    {
+      eyebrow: 'New Collection',
+      title: (headlineTop?.enabled && headlineTop.title) || 'Festive Saree',
+      titleItalic: (headlineBottom?.enabled && headlineBottom.title) || 'Collection',
+      subtitle: (subheadline?.enabled && subheadline.title) || 'Timeless drapes crafted for weddings, festivals and special celebrations.',
+      ctaLabel: 'Shop the Collection', ctaRoute: 'products',
+      image: bgImg || productImgs[0] || null,
+    },
+    {
+      eyebrow: 'Signature Weaves', title: 'Bridal', titleItalic: 'Couture',
+      subtitle: 'Handloom masterpieces for your most cherished celebrations.',
+      ctaLabel: 'Explore Bridal', ctaRoute: 'products',
+      image: productImgs[1] || null,
+    },
+    {
+      eyebrow: 'Everyday Luxe', title: 'Modern', titleItalic: 'Classics',
+      subtitle: 'Lightweight drapes and sets for work, festivals and beyond.',
+      ctaLabel: 'Shop New In', ctaRoute: 'products',
+      image: productImgs[2] || null,
+    },
+  ];
 
   return (
     <div>
       <PromoMarquee promos={settings.category_promotions} categories={categories} onNavigate={onNavigate} toast={toast} />
-
-      {/* ── 1. CINEMATIC HERO ────────────────────────────────────
-          Full-bleed dark stage with a slow animated silk-flow
-          overlay, big serif headline center-aligned, and a slim
-          house-name marquee scrolling on the right edge. The
-          admin's uploaded background image (if set) overrides the
-          cinematic backdrop with a scrim, same as before. */}
-      <section
-        className={`relative overflow-hidden ${heroBgUrl ? 'bg-stone-900' : 'editorial-hero'}`}
-        style={heroBgUrl ? { backgroundImage: `url(${heroBgUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}>
-        {heroBgUrl ? (
-          <div className="absolute inset-0 bg-black/45"></div>
-        ) : (
-          <>
-            <div className="editorial-silk" aria-hidden="true" />
-            <LuxuryBackground />
-          </>
-        )}
-
-        {/* Vertical house-name marquee, faint, behind copy. */}
-        {!heroBgUrl && (
-          <div aria-hidden="true" className="absolute top-0 bottom-0 right-2 sm:right-6 w-[160px] overflow-hidden opacity-20 hidden md:block">
-            <div className="editorial-house-marquee font-luxury-italic text-amber-200 text-2xl leading-[3.5rem] tracking-widest text-right">
-              {[...Array(2)].map((_, copy) => (
-                <div key={copy}>
-                  <div>Banarasi</div>
-                  <div>Kanjeevaram</div>
-                  <div>Chanderi</div>
-                  <div>Tussar</div>
-                  <div>Patola</div>
-                  <div>Bandhani</div>
-                  <div>Mysore Silk</div>
-                  <div>Paithani</div>
-                  <div>Dabka</div>
-                  <div>Zardozi</div>
-                  <div>Gota Patti</div>
-                  <div>Mirror Work</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="relative max-w-5xl mx-auto px-6 py-24 sm:py-32 md:py-40 text-center">
-          {announcement?.enabled && announcement?.title && (
-            <span className="inline-flex items-center gap-2 bg-white/8 backdrop-blur border border-amber-300/40 px-5 py-1.5 rounded-full text-[11px] uppercase font-medium text-amber-100 mb-8 tracking-[0.18em]">
-              <span className="w-1.5 h-1.5 bg-amber-300 rounded-full animate-pulse"></span>
-              {announcement.title}
-            </span>
-          )}
-
-          {(headlineTop?.enabled && headlineTop?.title) || (headlineBottom?.enabled && headlineBottom?.title) ? (
-            <h1 className="font-luxury text-5xl sm:text-7xl md:text-[5.5rem] font-semibold leading-[1.03] text-amber-50">
-              {headlineTop?.enabled && headlineTop?.title && (
-                <span className="block reveal-up">{headlineTop.title}</span>
-              )}
-              {headlineBottom?.enabled && headlineBottom?.title && (
-                <span
-                  className="block font-luxury-italic font-medium reveal-up mt-1"
-                  style={{
-                    transitionDelay: '120ms',
-                    background: 'linear-gradient(135deg, #f5e8c7 0%, #e0b04a 45%, #c89b3c 100%)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    backgroundClip: 'text',
-                  }}
-                >
-                  {headlineBottom.title}
-                </span>
-              )}
-            </h1>
-          ) : null}
-
-          {subheadline?.enabled && subheadline?.title && (
-            <p className="reveal-up mt-7 text-base sm:text-lg text-amber-50/80 leading-relaxed max-w-2xl mx-auto" style={{ transitionDelay: '220ms' }}>
-              {subheadline.title}
-            </p>
-          )}
-
-          <div className="reveal-up mt-10 flex flex-wrap justify-center gap-3" style={{ transitionDelay: '320ms' }}>
-            <button onClick={() => onNavigate('products')}
-              className="luxury-cta px-8 py-3.5 rounded-full font-semibold tracking-wide flex items-center gap-2">
-              {t('home.shopNow')} <ChevronRight className="w-4 h-4" />
-            </button>
-            <button onClick={() => onNavigate('products', { category: 'bridal' })}
-              className="luxury-cta-ghost px-8 py-3.5 rounded-full font-semibold tracking-wide">
-              Bridal Couture
-            </button>
-          </div>
-
-          <div className="reveal-up mt-14 flex flex-wrap justify-center items-center gap-x-8 gap-y-3" style={{ transitionDelay: '420ms' }}>
-            {trustPills.map((f) => {
-              const Icon = HERO_FEATURE_ICONS[f.key] || Shield;
-              return (
-                <div key={f.key} className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-amber-100/70">
-                  <Icon className="w-4 h-4 text-amber-300" />
-                  <span>{f.title}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Bouncing chevron scroll cue. */}
-          <div aria-hidden="true" className="hidden md:flex flex-col items-center mt-20 text-amber-100/40">
-            <span className="text-[10px] tracking-[0.3em] uppercase mb-2">Scroll</span>
-            <ChevronRight className="w-4 h-4 rotate-90 editorial-scroll-cue" />
-          </div>
-        </div>
-      </section>
-
-      {/* ── 2. COLLECTION MOSAIC ─────────────────────────────────
-          Asymmetric editorial layout — one anchor tile on the
-          left (first category), three smaller tiles on the right.
-          Each tile is clickable and routes into the matching
-          category. Hover: tile lifts, gold border, art zooms. */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 py-20">
-        <div className="reveal-up text-center mb-12">
-          <p className="text-[11px] uppercase tracking-[0.32em] font-semibold mb-3" style={{ color: '#c89b3c' }}>The Collections</p>
-          <h2 className="font-luxury text-4xl sm:text-5xl font-semibold text-stone-900 dark:text-amber-50">
-            Worlds within Redlook
-          </h2>
-          <div aria-hidden="true" className="editorial-hairline mx-auto w-32 mt-5" />
-        </div>
-
-        {(() => {
-          if (!categories.length) {
-            return (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 h-[28rem]">
-                {[...Array(3)].map((_, i) => <div key={i} className="bg-stone-100 animate-pulse rounded-3xl" />)}
-              </div>
-            );
-          }
-          const [anchor, ...rest] = categories;
-          const anchorStyle = COLLECTION_TILE_STYLES[anchor.id] || DEFAULT_TILE_STYLE;
-          // Small editorial tile. Reused by the 2×2 cluster beside the anchor
-          // and by the overflow grid below, so EVERY category renders as a tile
-          // (the layout no longer caps at the first five categories).
-          const smallTile = (c, idx) => {
-            const s = COLLECTION_TILE_STYLES[c.id] || DEFAULT_TILE_STYLE;
-            return (
-              <button
-                key={c.id}
-                onClick={() => onNavigate('products', { category: c.id })}
-                className="editorial-tile reveal-up text-left h-[13.5rem] md:h-[16.4rem]"
-                style={{ background: s.gradient, transitionDelay: `${(idx + 1) * 80}ms` }}>
-                <div className="absolute inset-0 flex items-end p-5">
-                  <div className="relative z-10">
-                    <p className="text-[10px] uppercase tracking-[0.24em] font-semibold mb-2" style={{ color: s.accent }}>
-                      {s.kicker}
-                    </p>
-                    <div className="font-luxury text-xl sm:text-2xl font-semibold text-amber-50">{c.name}</div>
-                    <p className="text-xs text-amber-50/70 mt-1 hidden sm:block">{s.subtitle}</p>
-                  </div>
-                </div>
-                <div className="editorial-tile-art absolute top-1/2 right-4 -translate-y-1/2 text-[5rem] opacity-90" aria-hidden="true">
-                  {c.icon}
-                </div>
-              </button>
-            );
-          };
-          // Categories past the anchor + 2×2 cluster (i.e. the 6th onward).
-          const overflow = rest.slice(4);
-          return (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Anchor — large square on the left */}
-                <button
-                  onClick={() => onNavigate('products', { category: anchor.id })}
-                  className="editorial-tile reveal-up text-left h-[28rem] md:h-[34rem]"
-                  style={{ background: anchorStyle.gradient }}>
-                  <div className="absolute inset-0 flex items-end p-8">
-                    <div className="relative z-10">
-                      <p className="text-[11px] uppercase tracking-[0.28em] font-semibold mb-3" style={{ color: anchorStyle.accent }}>
-                        {anchorStyle.kicker}
-                      </p>
-                      <div className="font-luxury text-4xl sm:text-5xl font-semibold text-amber-50 mb-2">{anchor.name}</div>
-                      <p className="text-sm text-amber-50/75 max-w-xs">{anchorStyle.subtitle}</p>
-                      <div className="editorial-tile-arrow mt-5 inline-flex items-center gap-2 text-amber-200 font-semibold text-sm">
-                        Explore the edit <ChevronRight className="w-4 h-4" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="editorial-tile-art absolute top-1/2 right-6 -translate-y-1/2 text-[10rem] sm:text-[12rem] opacity-90" style={{ filter: 'drop-shadow(0 12px 28px rgba(0,0,0,0.4))' }} aria-hidden="true">
-                    {anchor.icon}
-                  </div>
-                </button>
-
-                {/* Up to 4 smaller tiles stacked on the right in a 2×2 grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  {rest.slice(0, 4).map(smallTile)}
-                </div>
-              </div>
-
-              {/* Any remaining categories in a uniform tile grid below, so the
-                  home page always shows the full catalogue of collections. */}
-              {overflow.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 mt-5">
-                  {overflow.map(smallTile)}
-                </div>
-              )}
-            </>
-          );
-        })()}
-      </section>
-
-      {/* ── 3. THE EDIT — horizontal product scroller ──────────── */}
-      <section className="py-16" style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(245,232,199,0.20) 50%, transparent 100%)' }}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex items-end justify-between mb-8 reveal-up">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.32em] font-semibold mb-3" style={{ color: '#c89b3c' }}>The Edit</p>
-              <h2 className="font-luxury text-3xl sm:text-4xl font-semibold text-stone-900 dark:text-amber-50">
-                {t('home.freshToday')}
-              </h2>
-              <div aria-hidden="true" className="editorial-hairline w-24 mt-3" />
-            </div>
-            <button onClick={() => onNavigate('products')} className="font-semibold text-sm flex items-center gap-1 transition group" style={{ color: '#7a1f2a' }}>
-              {t('common.viewAll')}
-              <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
-            </button>
-          </div>
-
-          {loading ? (
-            <div className="flex gap-5 overflow-hidden">
-              {[...Array(5)].map((_, i) => <div key={i} className="bg-stone-100 animate-pulse rounded-2xl w-[260px] aspect-[3/4] flex-shrink-0" />)}
-            </div>
-          ) : (
-            <div className="editorial-scroller -mx-4 sm:-mx-6 px-4 sm:px-6">
-              {products.map((p) => (
-                <article
-                  key={p.id}
-                  className="editorial-product-card reveal-up"
-                  onClick={() => onNavigate('product', { id: p.id })}>
-                  <div className="epc-frame">
-                    {resolveImageUrl(p.image)
-                      ? <img src={resolveImageUrl(p.image)} alt={p.name} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
-                      : <span aria-hidden="true" style={{ filter: 'drop-shadow(0 8px 18px rgba(74,15,26,0.25))' }}>{p.image}</span>}
-                    {p.isOrganic && (
-                      <span className="luxury-badge absolute top-3 left-3">{t('products.organic')}</span>
-                    )}
-                  </div>
-                  <div className="mt-4 px-1">
-                    <p className="text-[10px] uppercase tracking-[0.2em] mb-1.5" style={{ color: '#c89b3c' }}>{p.freshness}</p>
-                    <h3 className="font-luxury text-lg text-stone-900 dark:text-amber-50 leading-snug">{p.name}</h3>
-                    <div className="mt-2 flex items-center justify-between">
-                      <span className="text-base font-semibold" style={{ color: '#4a0f1a' }}>{formatINR(p.price)}</span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onAdd(p); }}
-                        className="luxury-cta px-3 py-1.5 rounded-full text-xs font-semibold">
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-
-          <p className="text-center text-xs text-stone-500 dark:text-amber-100/60 mt-4 hidden md:block">Swipe or scroll horizontally to explore the edit →</p>
-        </div>
-      </section>
-
-      {/* ── 4. BRAND STORY BAND ──────────────────────────────────
-          Ivory band with a centred drop-cap paragraph and three
-          gold-framed pillars below. Pure typography — no images. */}
-      <section className="editorial-band py-20">
-        <div className="max-w-4xl mx-auto px-6 text-center">
-          <p className="reveal-up text-[11px] uppercase tracking-[0.32em] font-semibold mb-3" style={{ color: '#c89b3c' }}>
-            Our craft
-          </p>
-          <h2 className="reveal-up font-luxury text-3xl sm:text-5xl font-semibold leading-tight text-stone-900" style={{ transitionDelay: '80ms' }}>
-            {settings?.company_tagline || 'Heritage drapes, modern grace.'}
-          </h2>
-          <div aria-hidden="true" className="editorial-hairline mx-auto w-36 mt-6 mb-8" />
-          <p className="reveal-up editorial-dropcap font-luxury-italic text-lg sm:text-xl text-stone-700 leading-relaxed text-left" style={{ transitionDelay: '180ms' }}>
-            Every Redlook drape begins on a wooden loom in a village where weaving has been a vocation for generations.
-            We work directly with master weavers from Varanasi, Kanchipuram, Chanderi, and Bhagalpur — paying fair wages,
-            preserving signature motifs, and bringing each piece into your wardrobe with the care of a private atelier.
-          </p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-14">
-            {[
-              { title: 'Hand-loomed', body: 'Made on traditional pit looms, never powered or mass-produced.' },
-              { title: 'Naturally dyed', body: 'Plant and mineral dyes wherever the weave allows — kinder to skin and the river.' },
-              { title: 'Verified authentic', body: 'Each saree is inspected, tagged, and numbered before it ships.' },
-            ].map((pillar, i) => (
-              <div key={pillar.title} className="reveal-up" style={{ transitionDelay: `${280 + i * 80}ms` }}>
-                <div aria-hidden="true" className="mx-auto w-10 editorial-hairline mb-4" />
-                <div className="font-luxury text-xl font-semibold text-stone-900 mb-2">{pillar.title}</div>
-                <p className="text-sm text-stone-700 leading-relaxed">{pillar.body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── 5. EDITOR'S PICK ─────────────────────────────────────
-          A single oversized hero product card — image left, copy
-          right (alternates on mobile). Gives one drape the runway
-          treatment per visit. */}
-      {editorsPick && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 py-20">
-          <div className="grid md:grid-cols-2 gap-8 lg:gap-16 items-center">
-            <div
-              className="reveal-up relative aspect-[3/4] rounded-3xl flex items-center justify-center text-[15rem] cursor-pointer overflow-hidden"
-              style={{ background: 'linear-gradient(180deg, #f5e8c7 0%, #fdf8ef 60%, #f5e8c7 100%)', border: '1px solid rgba(200,155,60,0.35)' }}
-              onClick={() => onNavigate('product', { id: editorsPick.id })}>
-              {resolveImageUrl(editorsPick.image)
-                ? <img src={resolveImageUrl(editorsPick.image)} alt={editorsPick.name} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
-                : <span aria-hidden="true" style={{ filter: 'drop-shadow(0 14px 32px rgba(74,15,26,0.35))' }}>{editorsPick.image}</span>}
-              <span className="luxury-badge absolute top-5 left-5">Editor's Pick</span>
-            </div>
-            <div className="reveal-up" style={{ transitionDelay: '120ms' }}>
-              <p className="text-[11px] uppercase tracking-[0.32em] font-semibold mb-3" style={{ color: '#c89b3c' }}>Drape of the week</p>
-              <h2 className="font-luxury text-4xl sm:text-5xl font-semibold text-stone-900 dark:text-amber-50 leading-tight mb-5">
-                {editorsPick.name}
-              </h2>
-              <div aria-hidden="true" className="editorial-hairline w-20 mb-6" />
-              <p className="text-base sm:text-lg text-stone-700 dark:text-amber-100/80 leading-relaxed mb-8">
-                {editorsPick.description}
-              </p>
-              <div className="flex items-baseline gap-3 mb-8">
-                <span className="font-luxury text-3xl font-semibold" style={{ color: '#4a0f1a' }}>{formatINR(editorsPick.price)}</span>
-                {editorsPick.mrp != null && editorsPick.mrp > editorsPick.price && (
-                  <span className="text-sm text-stone-400 line-through">{formatINR(editorsPick.mrp)}</span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={() => onNavigate('product', { id: editorsPick.id })}
-                  className="luxury-cta px-7 py-3 rounded-full font-semibold tracking-wide flex items-center gap-2">
-                  View this drape <ChevronRight className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => { onAdd(editorsPick); }}
-                  className="px-7 py-3 rounded-full font-semibold tracking-wide border transition"
-                  style={{ borderColor: '#7a1f2a', color: '#7a1f2a' }}>
-                  Add to bag
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* ── 6. WEAVE TRAIL — three-step "loom to door" ──────────── */}
-      <section className="max-w-6xl mx-auto px-4 sm:px-6 py-16">
-        <div className="reveal-up text-center mb-12">
-          <p className="text-[11px] uppercase tracking-[0.32em] font-semibold mb-3" style={{ color: '#c89b3c' }}>How it travels</p>
-          <h2 className="font-luxury text-3xl sm:text-4xl font-semibold text-stone-900 dark:text-amber-50">
-            From the loom to your door
-          </h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-10 relative">
-          {[
-            { step: '01', title: 'Curated by hand', body: 'Our drape consultants visit weaver families and select the season\'s edit, piece by piece.' },
-            { step: '02', title: 'Verified & tagged', body: 'Each saree is inspected, numbered, and sealed with a Redlook authenticity tag.' },
-            { step: '03', title: 'Concierge delivery', body: 'Insured, tracked shipping with optional white-glove try-on for bridal couture.' },
-          ].map((s, i) => (
-            <div key={s.step} className="reveal-up relative pl-6" style={{ transitionDelay: `${i * 100}ms` }}>
-              <div className="absolute left-0 top-0 h-full w-px" style={{ background: 'linear-gradient(180deg, rgba(200,155,60,0.85) 0%, transparent 100%)' }} />
-              <p className="font-luxury-italic text-2xl mb-2" style={{ color: '#c89b3c' }}>{s.step}</p>
-              <h3 className="font-luxury text-xl font-semibold text-stone-900 dark:text-amber-50 mb-2">{s.title}</h3>
-              <p className="text-sm text-stone-700 dark:text-amber-100/70 leading-relaxed">{s.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── 7. ATELIER NEWSLETTER — concierge CTA ──────────────── */}
-      <section className="editorial-atelier py-20 relative overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-          <div className="luxury-shimmer" />
-        </div>
-        <div className="relative max-w-3xl mx-auto px-6 text-center">
-          <p className="reveal-up text-[11px] uppercase tracking-[0.32em] font-semibold mb-4 text-amber-300">
-            The Atelier
-          </p>
-          <h2 className="reveal-up font-luxury text-4xl sm:text-5xl font-semibold text-amber-50 leading-tight" style={{ transitionDelay: '80ms' }}>
-            Join our private list
-          </h2>
-          <div aria-hidden="true" className="editorial-hairline mx-auto w-24 mt-5 mb-6" />
-          <p className="reveal-up text-amber-100/80 leading-relaxed mb-8" style={{ transitionDelay: '160ms' }}>
-            Be first to see new drops from emerging Indian designers, private bridal previews, and concierge styling notes — once a fortnight, never more.
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              toast.push('Thank you — we\'ve added you to the atelier list.', 'success');
-              e.currentTarget.reset();
-            }}
-            className="reveal-up flex flex-col sm:flex-row gap-3 max-w-xl mx-auto"
-            style={{ transitionDelay: '220ms' }}>
-            <input
-              type="email"
-              required
-              placeholder="your@email.com"
-              aria-label="Email address"
-              className="editorial-atelier-input flex-1 px-5 py-3.5 rounded-full text-sm"
-            />
-            <button type="submit" className="luxury-cta px-7 py-3.5 rounded-full font-semibold tracking-wide whitespace-nowrap">
-              Join the list
-            </button>
-          </form>
-          <p className="text-[11px] text-amber-100/50 mt-4 tracking-wide">No spam, ever. Unsubscribe in one click.</p>
-        </div>
-      </section>
+      <HeroSlider slides={heroSlides} onNavigate={onNavigate} />
+      <CategoryArches categories={categories} products={products} onNavigate={onNavigate} />
+      <ServiceBenefits settings={settings} />
+      <WeddingWardrobe products={products} onNavigate={onNavigate} />
+      <VirtualTrialPromo products={products} onNavigate={onNavigate} />
+      <NewArrivals products={products} onNavigate={onNavigate} onAdd={onAdd} />
+      <BestSellers products={bestSellers} onNavigate={onNavigate} onAdd={onAdd} />
+      <VisitStore />
     </div>
   );
 }
@@ -772,7 +390,20 @@ export function ProductListPage({ onNavigate, params }) {
   if (sortBy === 'price-high') filtered = [...filtered].sort((a, b) => b.price - a.price);
   if (sortBy === 'rating') filtered = [...filtered].sort((a, b) => b.rating - a.rating);
 
-  const onAdd = (p) => { addItem(p); toast.push(t('products.addedToCart', { name: p.name })); triggerSuggestions(p); };
+  const onAdd = (p) => { addItem(p); trackAddToCart(p); toast.push(t('products.addedToCart', { name: p.name })); triggerSuggestions(p); };
+
+  // Dynamic SEO: a category view gets its own local title/description/canonical.
+  const activeCat = categories.find((c) => c.id === activeCategory);
+  const catName = activeCategory !== 'all' && activeCat ? activeCat.name : null;
+  useSeo(catName ? {
+    title: seoTitle(`${catName} Collection in Ballia`),
+    description: `Shop ${catName} at Redlook, Sahatwar, Ballia — part of our saree, lehenga, suit material and fabric collection. Visit our store in Purani Bazar, near Durga Mata Mandir.`,
+    canonicalPath: `/products?category=${activeCategory}`,
+  } : SEO.shop);
+  useJsonLd(breadcrumbLd(catName
+    ? [{ name: 'Home', path: '/' }, { name: 'Shop', path: '/products' }, { name: catName, path: `/products?category=${activeCategory}` }]
+    : [{ name: 'Home', path: '/' }, { name: 'Shop', path: '/products' }]));
+  useEffect(() => { if (!loading && filtered.length) trackViewItemList(filtered, catName || 'Shop'); /* eslint-disable-next-line */ }, [loading, activeCategory]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
@@ -938,6 +569,23 @@ export function ProductDetailsPage({ params, onNavigate }) {
       setLoading(false);
     });
   }, [params.id]);
+
+  // Dynamic SEO from real product data (null-safe before load; hooks run every
+  // render, before the early returns below).
+  const canonicalPath = `/products/${params.id}`;
+  const pImg = product ? resolveImageUrl(product.images?.[0] || product.image, 1200) : null;
+  useSeo(product ? {
+    title: seoTitle(product.name),
+    description: (product.description || `${product.name} — available at Redlook, Purani Bazar, Sahatwar, Ballia.`).replace(/\s+/g, ' ').slice(0, 300),
+    canonicalPath,
+    image: pImg || undefined,
+    type: 'product',
+  } : { title: seoTitle('Product'), canonicalPath });
+  useJsonLd(product ? [
+    productLd(product, { imageUrl: pImg, canonicalUrl: `${SITE_URL}${canonicalPath}`, inStock: (product.stock ?? 0) > 0 }),
+    breadcrumbLd([{ name: 'Home', path: '/' }, { name: 'Shop', path: '/products' }, { name: product.name, path: canonicalPath }]),
+  ] : null);
+  useEffect(() => { if (product) trackViewItem(product); }, [product]);
 
   if (loading) return <div className="max-w-7xl mx-auto px-4 sm:px-6 py-16"><div className="bg-stone-100 animate-pulse h-96 rounded-2xl"></div></div>;
   if (!product) return (

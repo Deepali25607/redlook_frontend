@@ -902,3 +902,90 @@ html[data-theme="dc"] {
   .luxury-navbar::after,
   .sparkle-star { animation: none !important; }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   HOMEPAGE REDESIGN (premium saree storefront) — additive styles.
+   Reuses the --lux-* tokens; nothing above is modified.
+   ════════════════════════════════════════════════════════════════ */
+
+/* Top promotional strip (above the navbar). */
+.rl-promo-bar {
+  background: linear-gradient(90deg, #4a0f1a 0%, #7a1f2a 50%, #4a0f1a 100%);
+  color: #f7ecd8;
+  border-bottom: 1px solid rgba(200, 155, 60, 0.35);
+}
+.rl-promo-bar a { color: #f7ecd8; }
+.rl-promo-bar a:hover { color: #f0d79a; }
+
+/* Maroon decorative hero / promo sections. */
+.rl-maroon-stage {
+  background:
+    radial-gradient(circle at 15% 20%, rgba(224,176,74,0.28) 0%, transparent 45%),
+    radial-gradient(circle at 85% 80%, rgba(193,75,106,0.22) 0%, transparent 50%),
+    linear-gradient(135deg, #4a0f1a 0%, #7a1f2a 55%, #330a12 100%);
+}
+/* Faint gold corner filigree frame used on maroon stages. */
+.rl-maroon-stage::before {
+  content: "";
+  position: absolute; inset: 14px;
+  border: 1px solid rgba(224,176,74,0.28);
+  border-radius: 18px;
+  pointer-events: none;
+}
+
+/* Arch-framed card (ogee/mehrab silhouette) with a gold border. Used by the
+   category row and the wedding-wardrobe cards. The arch is a rounded top
+   with square-ish bottom; the gold ring is a border + inner box-shadow. */
+.rl-arch {
+  border-radius: 48% 48% 14px 14px / 62% 62% 14px 14px;
+  border: 2px solid var(--lux-gold);
+  box-shadow: 0 0 0 4px rgba(253,248,239,0.9), 0 14px 30px -12px rgba(74,15,26,0.45);
+  overflow: hidden;
+  background: linear-gradient(135deg, #7a1f2a 0%, #4a0f1a 100%);
+  transition: transform 320ms ease, box-shadow 320ms ease;
+}
+.rl-arch:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 0 0 4px rgba(253,248,239,1), 0 22px 44px -14px rgba(74,15,26,0.55);
+}
+/* Larger radius variant for the big wedding cards. */
+.rl-arch-lg { border-radius: 40% 40% 16px 16px / 34% 34% 16px 16px; }
+
+/* Cream/pink service-benefit bar. */
+.rl-benefits {
+  background: linear-gradient(90deg, #fbeef0 0%, #fdf8ef 50%, #fbeef0 100%);
+  border: 1px solid rgba(200, 155, 60, 0.30);
+}
+
+/* Burgundy footer trust strip. */
+.rl-trust-strip {
+  background: linear-gradient(90deg, #4a0f1a 0%, #7a1f2a 50%, #4a0f1a 100%);
+  color: #f7ecd8;
+  border-top: 2px solid rgba(200, 155, 60, 0.45);
+}
+
+/* Hero slider: slide cross-fade + dot indicators. */
+.rl-slide { transition: opacity 700ms ease; }
+.rl-dot {
+  width: 9px; height: 9px; border-radius: 9999px;
+  background: rgba(247,236,216,0.45); transition: all 240ms ease; cursor: pointer;
+}
+.rl-dot.is-active { width: 26px; background: var(--lux-gold-soft); }
+
+/* Nav dropdown panel. */
+.rl-nav-dropdown {
+  background: linear-gradient(180deg, #fdf8ef 0%, #f7ecd8 100%);
+  border: 1px solid rgba(200, 155, 60, 0.40);
+  box-shadow: 0 18px 40px -16px rgba(74,15,26,0.40);
+}
+
+/* Section heading flourish lines. */
+.rl-flourish-line {
+  height: 1px; width: 56px;
+  background: linear-gradient(90deg, transparent, var(--lux-gold));
+}
+.rl-flourish-line.is-right { background: linear-gradient(90deg, var(--lux-gold), transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rl-arch, .rl-slide, .rl-dot { transition: none !important; }
+}
