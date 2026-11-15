@@ -37,6 +37,8 @@ const ROUTES = [
   ['credit',              '/account/credit',                [],            []],
   ['wishlist',            '/wishlist',                      [],            []],
   ['virtual-trial',       '/virtual-trial',                 [],            []],
+  ['about',               '/about-us',                      [],            []],
+  ['contact',             '/contact-us',                    [],            []],
   // Local SEO landing pages (data-driven; see seo/landingRoutes.js).
   ...LANDING_PAGES.map((c) => [c.name, c.path, [], []]),
 

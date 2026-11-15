@@ -17,6 +17,8 @@ const OUT = path.resolve(__dirname, '..', 'public', 'sitemap.xml');
 const CORE = [
   { loc: '/', changefreq: 'weekly', priority: '1.0' },
   { loc: '/products', changefreq: 'daily', priority: '0.9' },
+  { loc: '/about-us', changefreq: 'monthly', priority: '0.7' },
+  { loc: '/contact-us', changefreq: 'monthly', priority: '0.7' },
   { loc: '/virtual-trial', changefreq: 'monthly', priority: '0.6' },
   ...LANDING_PAGES.map((c) => ({ loc: c.path, changefreq: 'weekly', priority: '0.8' })),
 ];

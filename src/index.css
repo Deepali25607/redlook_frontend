@@ -814,12 +814,15 @@ html[data-theme="dc"] {
 .luxury-nav-tab {
   position: relative;
   color: #6b4326;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border-radius: 10px;
   font-weight: 500;
   font-size: 0.875rem;
+  white-space: nowrap;      /* never let a label wrap to two lines */
   transition: color 220ms ease, background-color 220ms ease;
 }
+/* Keep the login / sign-up labels on one line too. */
+.luxury-cta, .luxury-link-login { white-space: nowrap; }
 .luxury-nav-tab:hover {
   color: #7a1f2a;
   background-color: rgba(224, 176, 74, 0.15);

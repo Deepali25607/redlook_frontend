@@ -682,6 +682,8 @@ export const api = {
   // Best sellers for the homepage carousel — most-ordered Active products
   // (backend aggregates order history, falls back to top-discount). In mock
   // mode there's no such endpoint, so reuse the product list.
+  // Contact Us enquiry — emails the shop via the backend (real submission).
+  submitContact: (payload) => post('/contact', payload),
   getBestSellers: (limit = 10) => {
     if (USE_MOCK) return apiCall('/products').then((r) => ({ data: (r.data || []).slice(0, limit) }));
     return apiCall(`/products/best-sellers?limit=${limit}`);

@@ -433,7 +433,7 @@ export function Navbar({ currentPage, onNavigate }) {
           </div>
         </button>
 
-        <nav ref={navMenuRef} className="hidden md:flex items-center gap-0.5">
+        <nav ref={navMenuRef} className="hidden lg:flex items-center gap-0.5">
           <button onClick={() => onNavigate('home')} className={`luxury-nav-tab ${currentPage === 'home' ? 'is-active' : ''}`}>{t('nav.home')}</button>
           <NavDropdown label={t('nav.shop')} open={navMenu === 'shop'}
             onToggle={() => setNavMenu((m) => (m === 'shop' ? null : 'shop'))} items={shopItems} onNavigate={goNav} />
@@ -514,7 +514,7 @@ export function Navbar({ currentPage, onNavigate }) {
             </div>
           )}
 
-          <button ref={mobileMenuToggleRef} onClick={() => setMenuOpen(o => !o)} className="luxury-icon-btn md:hidden p-2" aria-label={t('nav.menu')}>
+          <button ref={mobileMenuToggleRef} onClick={() => setMenuOpen(o => !o)} className="luxury-icon-btn lg:hidden p-2" aria-label={t('nav.menu')}>
             {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
@@ -542,13 +542,15 @@ export function Navbar({ currentPage, onNavigate }) {
       )}
 
       {menuOpen && (
-        <div ref={mobileMenuRef} className="luxury-mobile-menu md:hidden">
+        <div ref={mobileMenuRef} className="luxury-mobile-menu lg:hidden">
           <div className="px-4 py-3 flex flex-col gap-1">
             <button onClick={() => goNav('home')} className={`luxury-nav-tab text-left !rounded-lg ${currentPage === 'home' ? 'is-active' : ''}`}>{t('nav.home')}</button>
             <button onClick={() => goNav('products')} className="luxury-nav-tab text-left !rounded-lg">{t('nav.shop')}</button>
             <button onClick={() => goNav('products')} className="luxury-nav-tab text-left !rounded-lg">New Arrivals</button>
             <button onClick={() => goNav('products')} className="luxury-nav-tab text-left !rounded-lg">Best Sellers</button>
             <button onClick={() => goNav('virtual-trial')} className={`luxury-nav-tab text-left !rounded-lg ${currentPage === 'virtual-trial' ? 'is-active' : ''}`}>Virtual Trial</button>
+            <button onClick={() => goNav('about')} className={`luxury-nav-tab text-left !rounded-lg ${currentPage === 'about' ? 'is-active' : ''}`}>About Us</button>
+            <button onClick={() => goNav('contact')} className={`luxury-nav-tab text-left !rounded-lg ${currentPage === 'contact' ? 'is-active' : ''}`}>Contact Us</button>
             {!isAuthenticated && (
               <>
                 <button onClick={() => { setMenuOpen(false); onNavigate('login'); }}
@@ -630,7 +632,9 @@ export function Footer({ onNavigate }) {
         <div>
           <h4 className="font-semibold text-white mb-3 text-sm">{t('footer.company')}</h4>
           <ul className="space-y-2 text-sm">
-            <li>{t('footer.about')}</li><li>{t('footer.careers')}</li><li>{t('footer.privacy')}</li><li>{t('footer.terms')}</li>
+            <li><button onClick={() => onNavigate('about')} className="hover:text-white">About Us</button></li>
+            <li><button onClick={() => onNavigate('contact')} className="hover:text-white">Contact Us</button></li>
+            <li><button onClick={() => onNavigate('virtual-trial')} className="hover:text-white">Virtual Trial</button></li>
           </ul>
         </div>
       </div>

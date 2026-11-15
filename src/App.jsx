@@ -8,6 +8,8 @@ import {
   OrdersPage, OrderTrackingPage, WishlistPage, MyCreditPage, NotFoundPage,
 } from './pages';
 import { VirtualTrialPage } from './home/VirtualTrialPage';
+import { AboutPage } from './content/AboutPage';
+import { ContactPage } from './content/ContactPage';
 import { LandingPage, LANDING_PAGES } from './seo/LandingPage';
 import { initAnalytics } from './seo/analytics';
 import { pathToRoute, routeToPath } from './router';
@@ -37,6 +39,8 @@ const ROUTES = {
   'credit': MyCreditPage,
   'wishlist': WishlistPage,
   'virtual-trial': VirtualTrialPage,
+  'about': AboutPage,
+  'contact': ContactPage,
   // Local SEO landing pages — each renders the shared LandingPage with its config.
   ...Object.fromEntries(LANDING_PAGES.map((c) => [c.name, (props) => <LandingPage config={c} {...props} />])),
 };
