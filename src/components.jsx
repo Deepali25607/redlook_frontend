@@ -412,24 +412,13 @@ export function Navbar({ currentPage, onNavigate }) {
             company_name (from admin Settings) in luxury serif, plus
             a gold italic tagline. Three twinkling sparkle stars hover
             around the medallion on slightly staggered timings. */}
-        <button onClick={() => onNavigate('home')} className="luxury-brand-wrap flex items-center gap-3 group min-w-0">
-          <div className="relative shrink-0">
-            {/* RL monogram logo (dark pink on ivory). */}
-            <div className="w-11 h-11 rounded-xl flex items-center justify-center font-luxury font-bold text-lg transition-transform group-hover:scale-105"
-              style={{ background: 'linear-gradient(135deg,#fff7fb,#fbe6f0)', color: '#b0215f', border: '1.5px solid #c2185b', boxShadow: '0 4px 12px -5px rgba(176,33,95,0.45)', letterSpacing: '-0.03em' }}>
-              RL
-            </div>
-          </div>
-          {/* Brand text. min-w-0 + truncate keeps a long custom
-              company_name from pushing icons off-screen on phones. */}
-          <div className="block text-left min-w-0">
-            <div className="font-luxury text-lg sm:text-2xl leading-none truncate" style={{ color: '#4a0f1a' }}>
-              {settings?.company_name || 'Redlook'}
-            </div>
-            {settings?.company_tagline && (
-              <div className="luxury-brand-tagline text-[10px] mt-1 truncate">{settings.company_tagline}</div>
-            )}
-          </div>
+        {/* Brand logo (contains the RL emblem + REDLOOK WOMEN'S WEAR + tagline).
+            mix-blend-multiply makes its cream background blend into the cream
+            navbar so there's no visible box. */}
+        <button onClick={() => onNavigate('home')} className="flex items-center group shrink-0" aria-label="Redlook Women’s Wear — Home">
+          <img src="/redlook-logo.png" alt="Redlook Women’s Wear — Heritage drapes, modern grace"
+            className="h-9 sm:h-12 w-auto object-contain transition-transform group-hover:scale-[1.02]"
+            width="640" height="213" style={{ mixBlendMode: 'multiply' }} />
         </button>
 
         <nav ref={navMenuRef} className="hidden lg:flex items-center gap-0.5">

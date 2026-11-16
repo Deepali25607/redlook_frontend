@@ -64,7 +64,7 @@ export const SEO = {
     description:
       'Explore beautiful sarees, lehengas, suit materials, shirting and suiting fabrics at Redlook, Purani Bazar, Sahatwar, Ballia, Uttar Pradesh. Discover our textile collection.',
     keywords:
-      'saree shop in Sahatwar, saree shop in Ballia, lehenga shop in Ballia, suit material Ballia, textile shop Sahatwar, fabric shop Ballia, साड़ी की दुकान सहतवार, बलिया में साड़ी की दुकान',
+      'Redlook Women’s Wear Sahatwar, Best Saree Shop in Sahatwar, Famous Saree Shop in Sahatwar, Fancy Saree Shop in Sahatwar, Designer Saree Shop in Sahatwar, Latest Saree Collection in Sahatwar, Best Saree Shop in Ballia, Trending Saree Collection Ballia, Designer Fancy Sarees Sahatwar, Bridal Lehenga Shop Sahatwar, Best Lehenga Shop in Ballia, Ladies Suit Shop Sahatwar, Famous Clothing Store in Sahatwar, Best Ladies Clothing Store in Ballia, Saree Shop Near Sahatwar, साड़ी की दुकान सहतवार, बलिया में साड़ी की दुकान',
   },
   shop: {
     title: title('Shop Sarees, Lehengas & Fabrics'),
