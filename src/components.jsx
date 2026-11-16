@@ -414,12 +414,11 @@ export function Navbar({ currentPage, onNavigate }) {
             around the medallion on slightly staggered timings. */}
         <button onClick={() => onNavigate('home')} className="luxury-brand-wrap flex items-center gap-3 group min-w-0">
           <div className="relative shrink-0">
-            <div className="luxury-brand-mark w-11 h-11 rounded-xl flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-amber-100" />
+            {/* RL monogram logo (dark pink on ivory). */}
+            <div className="w-11 h-11 rounded-xl flex items-center justify-center font-luxury font-bold text-lg transition-transform group-hover:scale-105"
+              style={{ background: 'linear-gradient(135deg,#fff7fb,#fbe6f0)', color: '#b0215f', border: '1.5px solid #c2185b', boxShadow: '0 4px 12px -5px rgba(176,33,95,0.45)', letterSpacing: '-0.03em' }}>
+              RL
             </div>
-            <Sparkles aria-hidden="true" className="sparkle-star sparkle-1" />
-            <Sparkles aria-hidden="true" className="sparkle-star sparkle-2" />
-            <Sparkles aria-hidden="true" className="sparkle-star sparkle-3" />
           </div>
           {/* Brand text. min-w-0 + truncate keeps a long custom
               company_name from pushing icons off-screen on phones. */}
